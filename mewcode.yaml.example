@@ -1,0 +1,13 @@
+# 将本文件复制为 mewcode.yaml，再填写真实 api_key。不要提交真实密钥。
+protocol: anthropic
+model: claude-sonnet-4-6
+base_url: https://api.anthropic.com
+api_key: your-api-key
+thinking:
+  enabled: true
+
+# OpenAI 示例：
+# protocol: openai
+# model: gpt-5
+# base_url: https://api.openai.com/v1
+# api_key: your-api-key

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mewcode"
+version = "0.1.0"
+description = "一个支持多模型流式对话的终端 AI 助手"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "PyYAML>=6.0",
+    "rich>=13.7",
+    "textual>=0.63",
+]
+
+[project.scripts]
+mewcode = "mewcode.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mewcode"]

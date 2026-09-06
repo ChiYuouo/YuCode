@@ -1,0 +1,73 @@
+Screen {
+    layout: vertical;
+    background: #17191a;
+    color: #e8eeee;
+}
+
+#chat-view {
+    height: 1fr;
+    padding: 1 5;
+    scrollbar-color: #536568;
+    scrollbar-color-hover: #63d8ef;
+}
+
+#welcome-panel {
+    width: 100%;
+    height: 1fr;
+    padding: 3 1;
+    content-align: center middle;
+}
+
+#prompt {
+    height: 5;
+    min-height: 3;
+    max-height: 8;
+    margin: 0 4;
+    padding: 0 1;
+    background: #202425;
+    color: #edf4f5;
+    border: round #4b5c60;
+}
+
+#prompt:focus {
+    border: round #63d8ef;
+}
+
+#status-bar {
+    height: 1;
+    margin: 0 5 1 5;
+    color: #8e9b9e;
+}
+
+.message {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.user-message {
+    padding: 0;
+}
+
+.assistant-message {
+    padding: 0 0 0 2;
+    color: #e8eeee;
+}
+
+.generation-indicator {
+    color: #63d8ef;
+    text-style: italic;
+}
+
+.error-message {
+    padding: 0;
+}
+
+.thinking-box {
+    margin: 0 0 1 0;
+    color: #9ba6aa;
+    background: transparent;
+}
+
+.thinking-box > CollapsibleTitle {
+    color: #8e9b9e;
+}
