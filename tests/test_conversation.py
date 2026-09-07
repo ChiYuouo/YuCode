@@ -2,6 +2,8 @@ from collections.abc import Iterator, Sequence
 
 from mewcode.conversation import Conversation
 from mewcode.providers.base import Message, ProviderError, StreamEvent, Usage
+from mewcode.tools.base import ToolCall
+from mewcode.tools.registry import ToolRegistry
 
 
 class FakeProvider:
@@ -55,6 +57,15 @@ def test_keeps_partial_text_when_provider_fails() -> None:
     assert conversation.messages[-1] == Message("assistant", "部分")
 
 
+def test_converts_unexpected_provider_failure_to_recoverable_turn() -> None:
+    conversation = Conversation(FakeProvider(error=ValueError("意外格式")))
+
+    result = conversation.run_turn("问题", lambda _: None)
+
+    assert result.error == "请求处理异常：意外格式"
+    assert conversation.messages == ()
+
+
 def test_rolls_back_user_message_when_interrupted_before_text() -> None:
     provider = FakeProvider([StreamEvent("thinking", "分析")], KeyboardInterrupt())
     conversation = Conversation(provider)
@@ -85,3 +96,53 @@ def test_keeps_usage_out_of_message_history() -> None:
 
     assert result.usage == Usage(4, 3, 2)
     assert all("usage" not in message.content for message in conversation.messages)
+
+
+def test_executes_one_tool_then_streams_final_answer(tmp_path) -> None:
+    class ToolProvider:
+        def __init__(self) -> None:
+            self.requests = []
+            self.responses = [
+                [StreamEvent("tool_call", tool_call=ToolCall("call-1", "write_file", {"path": "a.txt", "content": "完成"}))],
+                [StreamEvent("text", "文件已写入")],
+            ]
+
+        def stream(self, messages, cancellation=None, tools=()):
+            self.requests.append((tuple(messages), tuple(tools)))
+            yield from self.responses.pop(0)
+
+    provider = ToolProvider()
+    results = []
+    conversation = Conversation(provider, ToolRegistry(tmp_path))
+
+    turn = conversation.run_turn("创建文件", lambda _: None, on_tool_result=results.append)
+
+    assert turn.completed and turn.text == "文件已写入"
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "完成"
+    assert results[0].success
+    assert len(provider.requests) == 2
+    assert any(block.__class__.__name__ == "ToolResultContent" for block in provider.requests[1][0][-1].blocks)
+
+
+def test_executes_only_first_tool_and_rejects_second_phase_tools(tmp_path) -> None:
+    class ToolProvider:
+        def __init__(self) -> None:
+            self.responses = [
+                [
+                    StreamEvent("tool_call", tool_call=ToolCall("one", "write_file", {"path": "one.txt", "content": "1"})),
+                    StreamEvent("tool_call", tool_call=ToolCall("two", "write_file", {"path": "two.txt", "content": "2"})),
+                ],
+                [StreamEvent("tool_call", tool_call=ToolCall("three", "write_file", {"path": "three.txt", "content": "3"}))],
+            ]
+
+        def stream(self, messages, cancellation=None, tools=()):
+            yield from self.responses.pop(0)
+
+    results = []
+    conversation = Conversation(ToolProvider(), ToolRegistry(tmp_path))
+    conversation.run_turn("创建", lambda _: None, on_tool_result=results.append)
+
+    assert (tmp_path / "one.txt").exists()
+    assert not (tmp_path / "two.txt").exists()
+    assert not (tmp_path / "three.txt").exists()
+    assert [result.error_code for result in results] == ["tool_call_limit", None, "tool_call_limit"]

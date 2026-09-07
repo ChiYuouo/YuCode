@@ -14,6 +14,8 @@ from mewcode.providers.base import (
     StreamEvent,
     Usage,
 )
+from mewcode.tools.base import ToolCall
+from mewcode.tools.registry import ToolRegistry
 from mewcode.tui.app import ChatApp
 from mewcode.tui.widgets import (
     AssistantMessage,
@@ -22,6 +24,7 @@ from mewcode.tui.widgets import (
     ErrorMessage,
     GenerationIndicator,
     ThinkingBox,
+    ToolActivity,
     WelcomePanel,
 )
 
@@ -226,5 +229,67 @@ def test_tui_multi_turn_sends_history() -> None:
             await pilot.pause(0.2)
             assert provider.requests[1][0] == Message("user", "第一问")
             assert provider.requests[1][1].role == "assistant"
+
+    asyncio.run(check())
+
+
+def test_tui_shows_tool_summary_and_final_answer(tmp_path) -> None:
+    class ToolProvider:
+        def __init__(self) -> None:
+            self.responses = [
+                [StreamEvent("tool_call", tool_call=ToolCall("call-1", "write_file", {"path": "answer.txt", "content": "ok"}))],
+                [StreamEvent("text", "已完成写入")],
+            ]
+
+        def stream(self, _messages, cancellation=None, tools=()):
+            assert len(tools) == 6
+            yield from self.responses.pop(0)
+
+    async def check() -> None:
+        app = ChatApp(
+            ToolProvider(),
+            ProviderConfig("openai", "gpt-test", "https://example.test", "key"),
+            ToolRegistry(tmp_path),
+        )
+        async with app.run_test() as pilot:
+            prompt = app.query_one(Composer)
+            prompt.text = "创建文件"
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            assert (tmp_path / "answer.txt").read_text(encoding="utf-8") == "ok"
+            activity = app.query_one(ToolActivity)
+            assert "write_file" in str(activity.render())
+            assert prompt.disabled is False
+
+    asyncio.run(check())
+
+
+def test_tui_command_rejection_returns_to_chat(tmp_path) -> None:
+    class CommandProvider:
+        def __init__(self) -> None:
+            self.responses = [
+                [StreamEvent("tool_call", tool_call=ToolCall("call-1", "run_command", {"command": "Get-Location"}))],
+                [StreamEvent("text", "命令未执行")],
+            ]
+
+        def stream(self, _messages, cancellation=None, tools=()):
+            yield from self.responses.pop(0)
+
+    async def check() -> None:
+        app = ChatApp(
+            CommandProvider(),
+            ProviderConfig("openai", "gpt-test", "https://example.test", "key"),
+            ToolRegistry(tmp_path),
+        )
+        async with app.run_test() as pilot:
+            prompt = app.query_one(Composer)
+            prompt.text = "运行目录命令"
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert app.screen.query_one("#reject-command")
+            await pilot.click("#reject-command")
+            await pilot.pause(0.3)
+            assert app.query_one(ToolActivity)
+            assert prompt.disabled is False
 
     asyncio.run(check())

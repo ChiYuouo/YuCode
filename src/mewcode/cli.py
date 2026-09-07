@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.console import Console
 
 from mewcode.config import ConfigError, ProviderConfig, load_config
 from mewcode.providers.anthropic import AnthropicProvider
 from mewcode.providers.base import Provider
 from mewcode.providers.openai import OpenAIProvider
+from mewcode.tools.registry import ToolRegistry
 from mewcode.tui.app import ChatApp
 
 
@@ -20,7 +23,7 @@ def main() -> None:
         console.print(f"配置错误：{error}", style="red")
         return
 
-    ChatApp(create_provider(config), config).run()
+    ChatApp(create_provider(config), config, ToolRegistry(Path.cwd())).run()
 
 
 def create_provider(config: ProviderConfig) -> Provider:
@@ -28,4 +31,3 @@ def create_provider(config: ProviderConfig) -> Provider:
     if config.protocol == "openai":
         return OpenAIProvider(config)
     return AnthropicProvider(config)
-

@@ -15,8 +15,12 @@ from mewcode.providers.base import (
     ProviderError,
     StreamCancelled,
     StreamEvent,
+    TextContent,
+    ToolCallContent,
+    ToolResultContent,
     Usage,
 )
+from mewcode.tools.base import ToolCall, ToolDefinition
 from mewcode.providers.sse import decode_sse
 
 
@@ -28,17 +32,22 @@ class OpenAIProvider:
         self._client = client
 
     def stream(
-        self, messages: Sequence[Message], cancellation: Cancellation | None = None
+        self,
+        messages: Sequence[Message],
+        cancellation: Cancellation | None = None,
+        tools: Sequence[ToolDefinition] = (),
     ) -> Iterator[StreamEvent]:
         """发送完整历史，并逐段返回正式回答文本。"""
         client, owns_client = self._get_client()
         payload = {
             "model": self._config.model,
-            "input": [{"role": message.role, "content": message.content} for message in messages],
+            "input": _serialize_messages(messages),
             "stream": True,
             "store": False,
             "max_output_tokens": 4096,
         }
+        if tools:
+            payload["tools"] = [_serialize_tool(tool) for tool in tools]
         headers = {
             "Authorization": f"Bearer {self._config.api_key}",
             "Content-Type": "application/json",
@@ -54,6 +63,7 @@ class OpenAIProvider:
                 self._raise_for_status(response)
                 if cancellation is not None:
                     cancellation.attach_close(response.close)
+                argument_parts: dict[str, str] = {}
                 for frame in decode_sse(response.iter_lines()):
                     if cancellation is not None and cancellation.is_cancelled:
                         raise StreamCancelled()
@@ -63,6 +73,26 @@ class OpenAIProvider:
                         delta = event.get("delta")
                         if isinstance(delta, str) and delta:
                             yield StreamEvent(kind="text", content=delta)
+                    elif event_type == "response.function_call_arguments.delta":
+                        item_id = event.get("item_id")
+                        delta = event.get("delta")
+                        if isinstance(item_id, str) and isinstance(delta, str):
+                            argument_parts[item_id] = argument_parts.get(item_id, "") + delta
+                    elif event_type == "response.function_call_arguments.done":
+                        item_id = event.get("item_id")
+                        call_id = event.get("call_id")
+                        name = event.get("name")
+                        arguments = event.get("arguments")
+                        if not isinstance(arguments, str) and isinstance(item_id, str):
+                            arguments = argument_parts.get(item_id, "")
+                        if not isinstance(call_id, str):
+                            call_id = item_id
+                        if not isinstance(call_id, str) or not isinstance(name, str) or not isinstance(arguments, str):
+                            raise ProviderError("OpenAI 返回了格式错误的工具调用。")
+                        yield StreamEvent(
+                            kind="tool_call",
+                            tool_call=ToolCall(call_id, name, _decode_arguments(arguments, "OpenAI")),
+                        )
                     elif event_type == "response.error":
                         raise ProviderError(f"OpenAI 流式请求失败：{_error_message(event)}")
                     elif event_type == "response.completed":
@@ -140,3 +170,58 @@ def _usage_from_completed(event: dict[str, Any]) -> Usage | None:
 
 def _int_value(value: Any) -> int:
     return value if isinstance(value, int) and value >= 0 else 0
+
+
+def _serialize_tool(tool: ToolDefinition) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": dict(tool.input_schema),
+    }
+
+
+def _serialize_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for message in messages:
+        text_parts: list[str] = []
+
+        def flush_text() -> None:
+            if text_parts:
+                output.append({"role": message.role, "content": "".join(text_parts)})
+                text_parts.clear()
+
+        for block in message.blocks:
+            if isinstance(block, TextContent):
+                text_parts.append(block.text)
+            elif isinstance(block, ToolCallContent):
+                flush_text()
+                output.append(
+                    {
+                        "type": "function_call",
+                        "call_id": block.call.id,
+                        "name": block.call.name,
+                        "arguments": json.dumps(block.call.arguments, ensure_ascii=False),
+                    }
+                )
+            elif isinstance(block, ToolResultContent):
+                flush_text()
+                output.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": block.result.call_id,
+                        "output": block.result.for_model(),
+                    }
+                )
+        flush_text()
+    return output
+
+
+def _decode_arguments(value: str, provider: str) -> dict[str, Any]:
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise ProviderError(f"{provider} 返回了无法解析的工具参数。") from error
+    if not isinstance(decoded, dict):
+        raise ProviderError(f"{provider} 返回的工具参数必须是对象。")
+    return decoded

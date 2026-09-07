@@ -7,6 +7,7 @@ from mewcode.config import ProviderConfig
 from mewcode.providers.anthropic import AnthropicProvider
 from mewcode.providers.base import Provider
 from mewcode.providers.openai import OpenAIProvider
+from mewcode.tools.registry import ToolRegistry
 
 
 def test_selects_provider_from_protocol() -> None:
@@ -37,11 +38,11 @@ def test_main_loads_current_directory_config_and_starts_tui(
         ),
         encoding="utf-8",
     )
-    captured: list[tuple[Provider, ProviderConfig]] = []
+    captured: list[tuple[Provider, ProviderConfig, ToolRegistry]] = []
 
     class FakeApp:
-        def __init__(self, provider: Provider, config: ProviderConfig) -> None:
-            captured.append((provider, config))
+        def __init__(self, provider: Provider, config: ProviderConfig, registry: ToolRegistry) -> None:
+            captured.append((provider, config, registry))
 
         def run(self) -> None:
             return None
@@ -53,3 +54,4 @@ def test_main_loads_current_directory_config_and_starts_tui(
 
     assert isinstance(captured[0][0], expected_type)
     assert captured[0][1].model == "test-model"
+    assert len(captured[0][2].definitions) == 6

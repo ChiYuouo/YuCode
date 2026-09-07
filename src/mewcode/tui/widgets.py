@@ -7,9 +7,12 @@ from pathlib import Path
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Collapsible, Markdown, Static, TextArea
+from textual.screen import ModalScreen
+from textual.widgets import Button, Collapsible, Markdown, Static, TextArea
+
+from mewcode.tools.base import ToolResult
 
 
 class Composer(TextArea):
@@ -147,3 +150,39 @@ class ErrorMessage(Static):
         message = Text("! 请求失败：", style="bold #ff8170")
         message.append(content, style="#ffb4a9")
         super().__init__(message, classes="message error-message")
+
+
+class ToolActivity(Static):
+    """仅显示工具调用的可读摘要，不泄露完整工具输出。"""
+
+    def __init__(self, result: ToolResult) -> None:
+        marker = "✓" if result.success else "!"
+        color = "#7ee787" if result.success else "#ffb4a9"
+        text = Text(f"{marker} 工具 {result.name}：", style=f"bold {color}")
+        if result.target:
+            text.append(f"{result.target} · ", style="#9ba6aa")
+        text.append(result.summary, style="#c8d2d5")
+        super().__init__(text, classes="message tool-activity")
+
+
+class CommandConfirmation(ModalScreen[bool]):
+    """命令真正启动前展示的明确确认弹窗。"""
+
+    def __init__(self, command: str) -> None:
+        super().__init__()
+        self._command = command
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static("模型请求执行以下 PowerShell 命令：", classes="confirm-title"),
+            Static(self._command, classes="confirm-command", markup=False),
+            Horizontal(
+                Button("执行", variant="success", id="approve-command"),
+                Button("拒绝", variant="error", id="reject-command"),
+                classes="confirm-actions",
+            ),
+            id="command-confirmation",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "approve-command")

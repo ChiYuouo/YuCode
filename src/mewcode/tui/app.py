@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Event
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -12,11 +13,15 @@ from textual.message import Message as TextualMessage
 from mewcode.config import ProviderConfig
 from mewcode.conversation import Conversation, TurnResult
 from mewcode.providers.base import Cancellation, Provider, StreamEvent, Usage
+from mewcode.tools.base import ToolCall, ToolResult
+from mewcode.tools.registry import ToolRegistry
 from mewcode.tui.widgets import (
     AssistantMessage,
     ChatStatus,
+    CommandConfirmation,
     Composer,
     ErrorMessage,
+    ToolActivity,
     UserMessage,
     WelcomePanel,
 )
@@ -38,6 +43,41 @@ class GenerationFinished(TextualMessage):
         self.result = result
 
 
+class ToolResultReady(TextualMessage):
+    """后台线程通知 UI 显示已完成工具的摘要。"""
+
+    def __init__(self, result: ToolResult) -> None:
+        super().__init__()
+        self.result = result
+
+
+class CommandApprovalRequested(TextualMessage):
+    """后台线程请求 UI 向用户展示命令确认框。"""
+
+    def __init__(self, pending: "PendingApproval") -> None:
+        super().__init__()
+        self.pending = pending
+
+
+class PendingApproval:
+    """在后台工具线程与 TUI 线程之间安全传递用户决定。"""
+
+    def __init__(self, call: ToolCall) -> None:
+        self.call = call
+        self._event = Event()
+        self._approved = False
+
+    def resolve(self, approved: bool) -> None:
+        self._approved = approved
+        self._event.set()
+
+    def wait(self, cancellation: Cancellation) -> bool:
+        while not cancellation.is_cancelled:
+            if self._event.wait(0.05):
+                return self._approved
+        return False
+
+
 @dataclass
 class TokenTotals:
     input_tokens: int = 0
@@ -54,15 +94,18 @@ class ChatApp(App[None]):
     CSS_PATH = "app.tcss"
     BINDINGS = [("ctrl+c", "cancel_generation", "停止生成")]
 
-    def __init__(self, provider: Provider, config: ProviderConfig) -> None:
+    def __init__(
+        self, provider: Provider, config: ProviderConfig, registry: ToolRegistry | None = None
+    ) -> None:
         super().__init__()
-        self._conversation = Conversation(provider)
+        self._conversation = Conversation(provider, registry)
         self._config = config
         self._totals = TokenTotals()
         self._cancellation: Cancellation | None = None
         self._assistant_message: AssistantMessage | None = None
         self._generating = False
         self._has_started_chat = False
+        self._pending_approval: PendingApproval | None = None
 
     def compose(self) -> ComposeResult:
         yield VerticalScroll(
@@ -107,7 +150,11 @@ class ChatApp(App[None]):
     def generate(self, prompt: str, cancellation: Cancellation) -> None:
         """在后台读取同步 Provider 流，避免阻塞 Textual 事件循环。"""
         result = self._conversation.run_turn(
-            prompt, lambda event: self.post_message(StreamChunk(event)), cancellation
+            prompt,
+            lambda event: self.post_message(StreamChunk(event)),
+            cancellation,
+            lambda result: self.post_message(ToolResultReady(result)),
+            lambda call: self._request_command_approval(call, cancellation),
         )
         self.post_message(GenerationFinished(result))
 
@@ -123,6 +170,24 @@ class ChatApp(App[None]):
         else:
             return
         self._scroll_to_latest(chat)
+
+    async def on_tool_result_ready(self, message: ToolResultReady) -> None:
+        """将工具摘要插入两段助手流式内容之间。"""
+        chat = self.query_one("#chat-view", VerticalScroll)
+        if self._assistant_message is not None:
+            self._assistant_message.finish()
+        next_assistant = AssistantMessage()
+        await chat.mount(ToolActivity(message.result), next_assistant)
+        self._assistant_message = next_assistant
+        self._scroll_to_latest(chat)
+
+    def on_command_approval_requested(self, message: CommandApprovalRequested) -> None:
+        self._pending_approval = message.pending
+        command = message.pending.call.arguments.get("command", "")
+        self.push_screen(
+            CommandConfirmation(command if isinstance(command, str) else "<无效命令>"),
+            lambda approved: message.pending.resolve(bool(approved)),
+        )
 
     def on_generation_finished(self, message: GenerationFinished) -> None:
         result = message.result
@@ -146,6 +211,14 @@ class ChatApp(App[None]):
         """仅在生成中响应 Ctrl+C，取消活动 HTTP 流。"""
         if self._generating and self._cancellation is not None:
             self._cancellation.cancel()
+            if self._pending_approval is not None:
+                self._pending_approval.resolve(False)
+                self._pending_approval = None
+
+    def _request_command_approval(self, call: ToolCall, cancellation: Cancellation) -> bool:
+        pending = PendingApproval(call)
+        self.post_message(CommandApprovalRequested(pending))
+        return pending.wait(cancellation)
 
     def _refresh_status(self, state: str) -> None:
         self.query_one(ChatStatus).set_values(

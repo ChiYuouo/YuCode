@@ -6,22 +6,55 @@ from dataclasses import dataclass
 from threading import Event, Lock
 from typing import Callable, Iterator, Literal, Protocol, Sequence
 
+from mewcode.tools.base import ToolCall, ToolDefinition, ToolResult
+
+
+@dataclass(frozen=True)
+class TextContent:
+    """会话中的一段普通文本。"""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolCallContent:
+    """保存到历史中的模型工具调用。"""
+
+    call: ToolCall
+
+
+@dataclass(frozen=True)
+class ToolResultContent:
+    """保存到历史中的工具执行结果。"""
+
+    result: ToolResult
+
+
+ContentBlock = TextContent | ToolCallContent | ToolResultContent
+
 
 @dataclass(frozen=True)
 class Message:
-    """一条可发送给模型的纯文本消息。"""
+    """一条可发送给模型的消息，兼容既有纯文本构造方式。"""
 
     role: Literal["user", "assistant"]
-    content: str
+    content: str | tuple[ContentBlock, ...]
+
+    @property
+    def blocks(self) -> tuple[ContentBlock, ...]:
+        if isinstance(self.content, str):
+            return (TextContent(self.content),)
+        return self.content
 
 
 @dataclass(frozen=True)
 class StreamEvent:
     """供应商无关的流式输出片段。"""
 
-    kind: Literal["thinking", "text", "usage"]
+    kind: Literal["thinking", "text", "usage", "tool_call"]
     content: str = ""
     usage: "Usage | None" = None
+    tool_call: ToolCall | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +111,9 @@ class Provider(Protocol):
     """任何可流式生成文本的模型后端。"""
 
     def stream(
-        self, messages: Sequence[Message], cancellation: Cancellation | None = None
+        self,
+        messages: Sequence[Message],
+        cancellation: Cancellation | None = None,
+        tools: Sequence[ToolDefinition] = (),
     ) -> Iterator[StreamEvent]:
         """使用完整历史生成统一流事件。"""
