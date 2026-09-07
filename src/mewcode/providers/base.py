@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import AsyncIterator, Literal, Protocol, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, AsyncIterator, Literal, Protocol
 
 from mewcode.cancellation import Cancellation
 from mewcode.tools.base import ToolCall, ToolDefinition, ToolResult
+
+if TYPE_CHECKING:
+    from mewcode.prompting import ModelRequest
 
 
 @dataclass(frozen=True)
@@ -58,12 +61,22 @@ class StreamEvent:
 
 
 @dataclass(frozen=True)
+class CacheUsage:
+    """供应商返回的提示缓存用量；不可用不等同于零。"""
+
+    available: bool = False
+    read_input_tokens: int = 0
+    write_input_tokens: int = 0
+
+
+@dataclass(frozen=True)
 class Usage:
-    """供应商在单轮结束时返回的实际 Token 用量。"""
+    """供应商在单轮结束时返回的实际 Token 与缓存用量。"""
 
     input_tokens: int = 0
     output_tokens: int = 0
     thinking_tokens: int = 0
+    cache: CacheUsage = field(default_factory=CacheUsage)
 
 
 class ProviderError(RuntimeError):
@@ -79,9 +92,7 @@ class Provider(Protocol):
 
     async def stream(
         self,
-        messages: Sequence[Message],
+        request: "ModelRequest",
         cancellation: Cancellation,
-        tools: Sequence[ToolDefinition] = (),
-        instructions: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """使用完整历史生成统一流事件。"""
+        """使用结构化请求生成统一流事件。"""

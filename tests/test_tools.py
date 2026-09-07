@@ -43,6 +43,16 @@ def test_file_tools_reject_workspace_escape_and_binary(tmp_path: Path) -> None:
     assert run_tool(ReadFileTool(), {"path": "binary.bin"}, tmp_path, "2").error_code == "binary_file"
 
 
+def test_read_file_requires_nonempty_path_and_explains_correction(tmp_path: Path) -> None:
+    definition = ReadFileTool().definition
+    assert definition.input_schema["properties"]["file_path"]["minLength"] == 1
+
+    result = run_tool(ReadFileTool(), {}, tmp_path)
+
+    assert result.error_code == "invalid_arguments"
+    assert '{"file_path": "note.txt"}' in result.summary
+
+
 def test_find_and_search_skip_generated_directories(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("class Provider: pass\n", encoding="utf-8")

@@ -11,7 +11,9 @@ from typing import Any
 import httpx
 
 from mewcode.config import ProviderConfig
+from mewcode.prompting import ModelRequest
 from mewcode.providers.base import (
+    CacheUsage,
     Cancellation,
     Message,
     ProviderError,
@@ -35,24 +37,25 @@ class OpenAIProvider:
 
     async def stream(
         self,
-        messages: Sequence[Message],
+        request: ModelRequest,
         cancellation: Cancellation,
-        tools: Sequence[ToolDefinition] = (),
-        instructions: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """发送完整历史，并逐段返回正式回答文本。"""
         client, owns_client = self._get_client()
         payload = {
             "model": self._config.model,
-            "input": _serialize_messages(messages),
+            "input": [
+                *[{"role": "developer", "content": message.content} for message in request.runtime_messages],
+                *_serialize_messages(request.history),
+            ],
             "stream": True,
             "store": False,
             "max_output_tokens": 4096,
+            "instructions": request.stable_instructions,
+            "prompt_cache_key": request.prompt_cache_key,
         }
-        if tools:
-            payload["tools"] = [_serialize_tool(tool) for tool in tools]
-        if instructions:
-            payload["instructions"] = instructions
+        if request.tools:
+            payload["tools"] = [_serialize_tool(tool) for tool in request.tools]
         headers = {
             "Authorization": f"Bearer {self._config.api_key}",
             "Content-Type": "application/json",
@@ -180,9 +183,18 @@ def _usage_from_completed(event: dict[str, Any]) -> Usage | None:
     usage = response.get("usage")
     if not isinstance(usage, dict):
         return None
+    details = usage.get("input_tokens_details")
+    cache = CacheUsage()
+    if isinstance(details, dict) and any(key in details for key in ("cached_tokens", "cache_write_tokens")):
+        cache = CacheUsage(
+            available=True,
+            read_input_tokens=_int_value(details.get("cached_tokens")),
+            write_input_tokens=_int_value(details.get("cache_write_tokens")),
+        )
     return Usage(
         input_tokens=_int_value(usage.get("input_tokens")),
         output_tokens=_int_value(usage.get("output_tokens")),
+        cache=cache,
     )
 
 

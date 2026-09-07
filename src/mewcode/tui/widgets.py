@@ -14,6 +14,7 @@ from textual.widgets import Button, Collapsible, Markdown, OptionList, Static, T
 from textual.widgets.option_list import Option
 
 from mewcode.tools.base import ToolCall, ToolResult
+from mewcode.providers.base import CacheUsage
 
 
 SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
@@ -74,16 +75,28 @@ class ChatStatus(Static):
         self._provider = provider
         self._model = model
         self._mode = "Do"
-        self.set_values("准备就绪", 0, 0, 0)
+        self.set_values("准备就绪", 0, 0, 0, CacheUsage())
 
     def set_mode(self, mode: str) -> None:
         """更新会话级 Agent 模式提示。"""
         self._mode = mode
 
-    def set_values(self, state: str, messages: int, input_tokens: int, output_tokens: int) -> None:
+    def set_values(
+        self,
+        state: str,
+        messages: int,
+        input_tokens: int,
+        output_tokens: int,
+        cache: CacheUsage,
+    ) -> None:
+        cache_text = (
+            f"  ·  缓存读 {cache.read_input_tokens} / 写 {cache.write_input_tokens}"
+            if cache.available
+            else "  ·  缓存数据不可用"
+        )
         self.update(
             f"● {state}  ·  {self._provider} / {self._model}"
-            f"  ·  模式:{self._mode}  ·  M:{messages}  ·  I:{input_tokens} O:{output_tokens}"
+            f"  ·  模式:{self._mode}  ·  M:{messages}  ·  I:{input_tokens} O:{output_tokens}{cache_text}"
         )
 
 

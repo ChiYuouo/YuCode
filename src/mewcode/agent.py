@@ -8,6 +8,8 @@ from enum import Enum
 
 from mewcode.cancellation import Cancellation
 from mewcode.conversation import Conversation
+from mewcode.policy import ExecutionPolicy, SensitiveDataRedactor, classify_authorization
+from mewcode.prompting import RuntimeContext, SystemPromptBuilder
 from mewcode.providers.base import Provider, ProviderError, StreamCancelled, Usage
 from mewcode.tools.base import ToolCall, ToolResult
 from mewcode.tools.executor import ApprovalCallback, ToolExecutor
@@ -25,6 +27,8 @@ class StopReason(str, Enum):
     CANCELLED = "cancelled"
     UNKNOWN_TOOL_LIMIT = "unknown_tool_limit"
     STREAM_ERROR = "stream_error"
+    VERIFICATION_REQUIRED = "verification_required"
+    POLICY_VIOLATION = "policy_violation"
 
 
 class ProgressPhase(str, Enum):
@@ -98,16 +102,6 @@ class _CollectedResponse:
     usage: Usage = Usage()
 
 
-FULL_INSTRUCTIONS = (
-    "你是 MewCode 的执行 Agent。持续使用可用工具观察、操作和验证，直到用户任务真正完成；"
-    "只在不再需要工具时给出最终回复。"
-)
-PLAN_INSTRUCTIONS = (
-    "你处于只读计划模式。只能使用提供的只读工具探索上下文，最终输出可执行计划；"
-    "不得修改文件、执行命令或声称已经实施计划。"
-)
-
-
 class Agent:
     """驱动模型、工具和历史，向界面只暴露异步事件。"""
 
@@ -117,6 +111,7 @@ class Agent:
         conversation: Conversation,
         registry: ToolRegistry,
         max_iterations: int = 10,
+        prompt_builder: SystemPromptBuilder | None = None,
     ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations 必须是正整数。")
@@ -125,6 +120,8 @@ class Agent:
         self._registry = registry
         self._executor = ToolExecutor(registry)
         self._max_iterations = max_iterations
+        self._prompt_builder = prompt_builder or SystemPromptBuilder()
+        self._redactor = SensitiveDataRedactor()
 
     @property
     def conversation(self) -> Conversation:
@@ -141,6 +138,8 @@ class Agent:
         total = Usage()
         visible_parts: list[str] = []
         unknown_rounds = 0
+        verification_misses = 0
+        policy = ExecutionPolicy(classify_authorization(text, mode.value), self._registry.context.root)
 
         for iteration in range(1, self._max_iterations + 1):
             if cancellation.is_cancelled:
@@ -155,19 +154,32 @@ class Agent:
                 f"第 {iteration}/{self._max_iterations} 轮：正在请求模型",
             )
             response = _CollectedResponse()
+            requires_verification = bool(policy.pending_verifications)
+            requires_guarded_response = requires_verification or policy.blocking_failure
             try:
                 tools = self._registry.read_only_definitions if mode is RunMode.PLAN else self._registry.definitions
-                instructions = PLAN_INSTRUCTIONS if mode is RunMode.PLAN else FULL_INSTRUCTIONS
-                async for event in self._provider.stream(
-                    self._conversation.messages, cancellation, tools, instructions
-                ):
+                request = self._prompt_builder.build(
+                    RuntimeContext(
+                        self._registry.context.root,
+                        mode.value,
+                        iteration,
+                        policy.authorization.value,
+                        tuple(sorted(policy.pending_verifications)),
+                        policy.blocking_failure,
+                    ),
+                    tools,
+                    self._conversation.messages,
+                )
+                async for event in self._provider.stream(request, cancellation):
                     if cancellation.is_cancelled:
                         raise StreamCancelled()
                     if event.kind == "text":
-                        response.text += event.content
-                        yield TextDelta(iteration, event.content)
+                        content = self._redactor.redact(event.content)
+                        response.text += content
+                        if not requires_guarded_response:
+                            yield TextDelta(iteration, content)
                     elif event.kind == "thinking":
-                        yield ThinkingDelta(iteration, event.content)
+                        yield ThinkingDelta(iteration, self._redactor.redact(event.content))
                     elif event.kind == "tool_call" and event.tool_call is not None:
                         response.calls.append(event.tool_call)
                         yield ToolCallStarted(iteration, event.tool_call)
@@ -199,14 +211,41 @@ class Agent:
                 return
 
             total = _add_usage(total, response.usage)
-            if response.text:
+            if response.text and not requires_guarded_response:
                 visible_parts.append(response.text)
-            self._conversation.append_assistant(response.text, response.calls)
 
             if not response.calls:
+                if policy.pending_verifications:
+                    if verification_misses >= 1:
+                        async for event in self._finish(
+                            StopReason.VERIFICATION_REQUIRED,
+                            visible_parts,
+                            total,
+                            iteration,
+                            "修改结果尚未验证，任务未完成。",
+                            "修改结果尚未验证；请读取待验证目标后再报告完成。",
+                        ):
+                            yield event
+                        return
+                    verification_misses += 1
+                    continue
+                if policy.blocking_failure:
+                    async for event in self._finish(
+                        StopReason.POLICY_VIOLATION,
+                        visible_parts,
+                        total,
+                        iteration,
+                        "操作未满足任务授权或工具流程，任务未完成。",
+                        "操作被策略拒绝；请先满足授权、读取或验证前置条件。",
+                    ):
+                        yield event
+                    return
+                self._conversation.append_assistant(response.text)
                 async for event in self._finish(StopReason.COMPLETED, visible_parts, total, iteration, "任务已完成。"):
                     yield event
                 return
+
+            self._conversation.append_assistant(response.text, response.calls)
 
             if iteration == self._max_iterations:
                 results = [
@@ -233,8 +272,9 @@ class Agent:
             )
             allowed_names = frozenset(definition.name for definition in tools)
             results = await self._executor.execute_many(
-                response.calls, cancellation, approve_command, allowed_names
+                response.calls, cancellation, approve_command, allowed_names, policy
             )
+            results = [self._redactor.redact_result(result) for result in results]
             self._conversation.append_tool_results(results)
             for result in results:
                 yield ToolResultReady(iteration, result)
@@ -272,8 +312,16 @@ class Agent:
 
 
 def _add_usage(first: Usage, second: Usage) -> Usage:
+    cache = first.cache
+    if second.cache.available:
+        cache = type(cache)(
+            available=True,
+            read_input_tokens=first.cache.read_input_tokens + second.cache.read_input_tokens,
+            write_input_tokens=first.cache.write_input_tokens + second.cache.write_input_tokens,
+        )
     return Usage(
         first.input_tokens + second.input_tokens,
         first.output_tokens + second.output_tokens,
         first.thinking_tokens + second.thinking_tokens,
+        cache,
     )

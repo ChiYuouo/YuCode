@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 from mewcode.cancellation import Cancellation
+from mewcode.policy import ExecutionPolicy
 from mewcode.tools.base import ToolCall, ToolResult, ToolSafety
 from mewcode.tools.registry import ToolRegistry
 
@@ -22,6 +23,7 @@ class ToolExecutor:
         cancellation: Cancellation,
         approve_command: ApprovalCallback | None = None,
         allowed_names: frozenset[str] | None = None,
+        policy: ExecutionPolicy | None = None,
     ) -> ToolResult:
         tool = self._registry.get(call.name)
         if tool is None:
@@ -30,6 +32,11 @@ class ToolExecutor:
             return _failure(call, f"当前模式不允许使用工具：{call.name}。", "tool_not_available")
         if not isinstance(call.arguments, Mapping):
             return _failure(call, "工具参数必须是对象。", "invalid_arguments")
+        if policy is not None:
+            rejected = policy.preflight(call)
+            if rejected is not None:
+                policy.record(rejected)
+                return rejected
         if call.name == "run_command":
             if cancellation.is_cancelled:
                 return _failure(call, "用户已取消，命令未执行。", "cancelled")
@@ -38,9 +45,12 @@ class ToolExecutor:
                 summary = "用户已取消，命令未执行。" if cancellation.is_cancelled else "用户拒绝执行命令。"
                 return _failure(call, summary, code)
         try:
-            return await tool.execute(call.arguments, self._registry.context, call.id, cancellation)
+            result = await tool.execute(call.arguments, self._registry.context, call.id, cancellation)
         except Exception as error:  # 工具边界必须把所有意外错误转为模型可处理结果。
-            return _failure(call, f"工具执行异常：{error}", "tool_exception")
+            result = _failure(call, f"工具执行异常：{error}", "tool_exception")
+        if policy is not None:
+            policy.record(result)
+        return result
 
     async def execute_many(
         self,
@@ -48,6 +58,7 @@ class ToolExecutor:
         cancellation: Cancellation,
         approve_command: ApprovalCallback | None = None,
         allowed_names: frozenset[str] | None = None,
+        policy: ExecutionPolicy | None = None,
     ) -> list[ToolResult]:
         """按顺序屏障执行调用，并始终返回与输入同序的结果。"""
         results: list[ToolResult | None] = [None] * len(calls)
@@ -56,7 +67,7 @@ class ToolExecutor:
                 break
             batch = await asyncio.gather(
                 *(
-                    self.execute(calls[index], cancellation, approve_command, allowed_names)
+                    self.execute(calls[index], cancellation, approve_command, allowed_names, policy)
                     for index in indexes
                 )
             )

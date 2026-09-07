@@ -7,7 +7,7 @@ from textual.widgets import Markdown
 from mewcode.agent import Agent, ToolCallStarted, ToolResultReady
 from mewcode.config import ProviderConfig
 from mewcode.conversation import Conversation
-from mewcode.providers.base import ProviderError, StreamCancelled, StreamEvent, Usage
+from mewcode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
 from mewcode.tools.base import ToolCall, ToolResult
 from mewcode.tools.registry import ToolRegistry
 from mewcode.tui.app import ChatApp
@@ -21,8 +21,8 @@ class FakeProvider:
     def __init__(self) -> None:
         self.requests = []
 
-    async def stream(self, messages, cancellation, tools=(), instructions=None):
-        self.requests.append((tuple(messages), tuple(tool.name for tool in tools), instructions))
+    async def stream(self, request, cancellation):
+        self.requests.append(request)
         yield StreamEvent("thinking", "分析过程")
         yield StreamEvent("text", "# 标题\n\n```python\nprint('hi')\n```")
         yield StreamEvent("usage", usage=Usage(input_tokens=3, output_tokens=5, thinking_tokens=2))
@@ -64,6 +64,7 @@ def test_tui_enter_sends_streams_and_updates_tokens() -> None:
             assert "› 测试消息" in str(app.query_one(".user-message").render())
             assert "M:2" in str(app.query_one(ChatStatus).render())
             assert "I:3 O:5" in str(app.query_one(ChatStatus).render())
+            assert "缓存数据不可用" in str(app.query_one(ChatStatus).render())
             assert composer.disabled is False
 
     asyncio.run(check())
@@ -93,7 +94,7 @@ def test_tui_shift_enter_and_thinking_layout() -> None:
 
 def test_tui_streaming_follows_latest_content() -> None:
     class LongProvider:
-        async def stream(self, _messages, cancellation, tools=(), instructions=None):
+        async def stream(self, _request, cancellation):
             yield StreamEvent("text", "第一段内容\n" * 20)
             await asyncio.sleep(0.2)
             yield StreamEvent("text", "第二段内容\n" * 20)
@@ -136,7 +137,7 @@ def test_tui_thinking_update_does_not_scroll_but_text_does() -> None:
 
 def test_tui_activity_frames_thinking_and_cancel_stop_together() -> None:
     class ThinkingProvider:
-        async def stream(self, _messages, cancellation, tools=(), instructions=None):
+        async def stream(self, _request, cancellation):
             yield StreamEvent("thinking", "正在分析")
             await cancellation.wait()
             raise StreamCancelled()
@@ -194,12 +195,12 @@ def test_tui_pending_tool_is_replaced_by_static_result() -> None:
 
 def test_tui_error_and_cancel_restore_input() -> None:
     class ErrorProvider:
-        async def stream(self, _messages, cancellation, tools=(), instructions=None):
+        async def stream(self, _request, cancellation):
             raise ProviderError("服务暂不可用")
             yield
 
     class BlockingProvider:
-        async def stream(self, _messages, cancellation, tools=(), instructions=None):
+        async def stream(self, _request, cancellation):
             await cancellation.wait()
             raise StreamCancelled()
             yield
@@ -245,7 +246,7 @@ def test_tui_mode_menu_switches_session_mode_and_shares_history(tmp_path: Path) 
             prompt.text = "分析"
             await pilot.press("enter")
             await pilot.pause(0.2)
-            assert set(provider.requests[0][1]) == {"read_file", "find_files", "search_code"}
+            assert {tool.name for tool in provider.requests[0].tools} == {"read_file", "find_files", "search_code"}
 
             prompt.text = "/d"
             await pilot.press("enter")
@@ -256,8 +257,8 @@ def test_tui_mode_menu_switches_session_mode_and_shares_history(tmp_path: Path) 
                 prompt.text = text
                 await pilot.press("enter")
                 await pilot.pause(0.2)
-            assert len(provider.requests[1][1]) == 6
-            assert len(provider.requests[2][0]) == 5
+            assert len(provider.requests[1].tools) == 6
+            assert len(provider.requests[2].history) == 5
             assert "› 分析" in str(app.query(".user-message").first().render())
 
     asyncio.run(check())
@@ -326,7 +327,7 @@ def test_tui_shows_tool_summary_and_final_answer(tmp_path: Path) -> None:
                 [StreamEvent("text", "已完成写入")],
             ]
 
-        async def stream(self, _messages, cancellation, tools=(), instructions=None):
+        async def stream(self, _request, cancellation):
             for event in self.responses.pop(0):
                 yield event
 
@@ -352,7 +353,7 @@ def test_tui_command_rejection_returns_to_chat(tmp_path: Path) -> None:
                 [StreamEvent("text", "命令未执行")],
             ]
 
-        async def stream(self, _messages, cancellation, tools=(), instructions=None):
+        async def stream(self, _request, cancellation):
             for event in self.responses.pop(0):
                 yield event
 
@@ -368,5 +369,23 @@ def test_tui_command_rejection_returns_to_chat(tmp_path: Path) -> None:
             await pilot.pause(0.3)
             assert app.query_one(ToolActivity)
             assert prompt.disabled is False
+
+    asyncio.run(check())
+
+
+def test_tui_shows_cache_usage_when_provider_reports_it() -> None:
+    class CacheProvider:
+        async def stream(self, _request, _cancellation):
+            yield StreamEvent("text", "完成")
+            yield StreamEvent("usage", usage=Usage(3, 1, cache=CacheUsage(True, 7, 2)))
+
+    async def check() -> None:
+        app = app_for_test(CacheProvider())
+        async with app.run_test() as pilot:
+            prompt = app.query_one(Composer)
+            prompt.text = "测试缓存"
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+            assert "缓存读 7 / 写 2" in str(app.query_one(ChatStatus).render())
 
     asyncio.run(check())

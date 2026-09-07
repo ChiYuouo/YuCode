@@ -17,6 +17,7 @@ from mewcode.agent import (
 )
 from mewcode.cancellation import Cancellation
 from mewcode.config import ProviderConfig
+from mewcode.providers.base import CacheUsage
 from mewcode.tools.base import ToolCall
 from mewcode.tui.widgets import (
     AssistantMessage,
@@ -37,10 +38,19 @@ from mewcode.tui.widgets import (
 class TokenTotals:
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_available: bool = False
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
     def add(self, usage) -> None:
         self.input_tokens += usage.input_tokens
         self.output_tokens += usage.output_tokens
+        self.cache_available = self.cache_available or usage.cache.available
+        self.cache_read_tokens += usage.cache.read_input_tokens
+        self.cache_write_tokens += usage.cache.write_input_tokens
+
+    def cache_usage(self) -> CacheUsage:
+        return CacheUsage(self.cache_available, self.cache_read_tokens, self.cache_write_tokens)
 
 
 class ChatApp(App[None]):
@@ -56,6 +66,7 @@ class ChatApp(App[None]):
         self._totals = TokenTotals()
         self._active_input_tokens = 0
         self._active_output_tokens = 0
+        self._active_cache = CacheUsage()
         self._cancellation: Cancellation | None = None
         self._assistant_message: AssistantMessage | None = None
         self._generating = False
@@ -114,6 +125,7 @@ class ChatApp(App[None]):
         self._cancellation = Cancellation()
         self._active_input_tokens = 0
         self._active_output_tokens = 0
+        self._active_cache = CacheUsage()
         self._pending_tools = {}
         event.composer.disabled = True
         self._start_activity_clock()
@@ -221,6 +233,7 @@ class ChatApp(App[None]):
             elif isinstance(event, UsageUpdated):
                 self._active_input_tokens = event.total.input_tokens
                 self._active_output_tokens = event.total.output_tokens
+                self._active_cache = event.total.cache
                 self._refresh_status(f"第 {event.iteration} 轮 · 正在生成")
             elif isinstance(event, ProgressUpdated):
                 if event.phase is ProgressPhase.MODEL and self._assistant_message is not None:
@@ -273,6 +286,7 @@ class ChatApp(App[None]):
         self._totals.add(event.usage)
         self._active_input_tokens = 0
         self._active_output_tokens = 0
+        self._active_cache = CacheUsage()
         if self._assistant_message is not None:
             self._assistant_message.finish()
         if event.error:
@@ -346,11 +360,18 @@ class ChatApp(App[None]):
         self._scroll_to_latest(chat)
 
     def _refresh_status(self, state: str) -> None:
+        totals_cache = self._totals.cache_usage()
+        cache = CacheUsage(
+            totals_cache.available or self._active_cache.available,
+            totals_cache.read_input_tokens + self._active_cache.read_input_tokens,
+            totals_cache.write_input_tokens + self._active_cache.write_input_tokens,
+        )
         self.query_one(ChatStatus).set_values(
             state,
             len(self._agent.conversation.messages),
             self._totals.input_tokens + self._active_input_tokens,
             self._totals.output_tokens + self._active_output_tokens,
+            cache,
         )
 
     def _scroll_to_latest(self, chat: VerticalScroll) -> None:

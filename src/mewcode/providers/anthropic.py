@@ -11,7 +11,9 @@ from typing import Any
 import httpx
 
 from mewcode.config import ProviderConfig
+from mewcode.prompting import ModelRequest, RuntimeMessage
 from mewcode.providers.base import (
+    CacheUsage,
     Cancellation,
     Message,
     ProviderError,
@@ -35,10 +37,8 @@ class AnthropicProvider:
 
     async def stream(
         self,
-        messages: Sequence[Message],
+        request: ModelRequest,
         cancellation: Cancellation,
-        tools: Sequence[ToolDefinition] = (),
-        instructions: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """发送完整历史，并逐段返回 Claude 的可见输出。"""
         client, owns_client = self._get_client()
@@ -46,12 +46,11 @@ class AnthropicProvider:
             "model": self._config.model,
             "max_tokens": 4096,
             "stream": True,
-            "messages": _serialize_messages(messages),
+            "messages": _serialize_messages(request.history, request.runtime_messages),
+            "system": _serialize_system(request.stable_instructions),
         }
-        if tools:
-            payload["tools"] = [_serialize_tool(tool) for tool in tools]
-        if instructions:
-            payload["system"] = instructions
+        if request.tools:
+            payload["tools"] = _serialize_tools(request.tools)
         if self._config.thinking_enabled:
             payload["thinking"] = {"type": "adaptive", "display": "summarized"}
         headers = {
@@ -60,7 +59,7 @@ class AnthropicProvider:
             "content-type": "application/json",
         }
 
-        input_tokens = 0
+        input_usage = Usage()
         watcher: asyncio.Task[None] | None = None
         response: httpx.Response | None = None
         try:
@@ -82,7 +81,7 @@ class AnthropicProvider:
                 event = self._decode_json(frame.data)
                 event_type = event.get("type", frame.event)
                 if event_type == "message_start":
-                    input_tokens = _input_tokens(event)
+                    input_usage = _input_usage(event)
                 elif event_type == "content_block_start":
                     index = event.get("index")
                     block = event.get("content_block")
@@ -91,7 +90,13 @@ class AnthropicProvider:
                         call_id = block.get("id")
                         if not isinstance(name, str) or not isinstance(call_id, str):
                             raise ProviderError("Claude 返回了格式错误的工具调用。")
-                        tool_blocks[index] = {"id": call_id, "name": name, "parts": []}
+                        initial_input = block.get("input")
+                        tool_blocks[index] = {
+                            "id": call_id,
+                            "name": name,
+                            "parts": [],
+                            "initial_input": initial_input if isinstance(initial_input, dict) else None,
+                        }
                 elif event_type == "content_block_delta":
                     delta = event.get("delta")
                     if isinstance(delta, dict):
@@ -109,16 +114,23 @@ class AnthropicProvider:
                     block = tool_blocks.pop(index, None) if isinstance(index, int) else None
                     if block is not None:
                         arguments = "".join(block["parts"])
+                        parsed_arguments = (
+                            _decode_arguments(arguments, "Claude")
+                            if arguments
+                            else block["initial_input"]
+                        )
+                        if parsed_arguments is None:
+                            raise ProviderError("Claude 返回了无法解析的工具参数。")
                         yield StreamEvent(
                             kind="tool_call",
                             tool_call=ToolCall(
-                                block["id"], block["name"], _decode_arguments(arguments, "Claude")
+                                block["id"], block["name"], parsed_arguments
                             ),
                         )
                 elif event_type == "error":
                     raise ProviderError(f"Claude 流式请求失败：{_error_message(event)}")
                 elif event_type == "message_delta":
-                    usage = _usage_from_delta(event, input_tokens)
+                    usage = _usage_from_delta(event, input_usage)
                     if usage is not None:
                         yield StreamEvent(kind="usage", usage=usage)
         except StreamCancelled:
@@ -197,22 +209,42 @@ def _response_error_message(response: httpx.Response) -> str:
     return _error_message(data) if isinstance(data, dict) else "服务未返回可读错误信息。"
 
 
-def _input_tokens(event: dict[str, Any]) -> int:
+def _input_usage(event: dict[str, Any]) -> Usage:
     message = event.get("message")
     usage = message.get("usage") if isinstance(message, dict) else None
-    return _int_value(usage.get("input_tokens")) if isinstance(usage, dict) else 0
+    if not isinstance(usage, dict):
+        return Usage()
+    return Usage(
+        input_tokens=_int_value(usage.get("input_tokens")),
+        cache=_cache_usage(usage),
+    )
 
 
-def _usage_from_delta(event: dict[str, Any], input_tokens: int) -> Usage | None:
+def _usage_from_delta(event: dict[str, Any], input_usage: Usage) -> Usage | None:
     usage = event.get("usage")
     if not isinstance(usage, dict):
         return None
     details = usage.get("output_tokens_details")
     thinking = _int_value(details.get("thinking_tokens")) if isinstance(details, dict) else 0
+    cache = _cache_usage(usage)
+    if not cache.available:
+        cache = input_usage.cache
     return Usage(
-        input_tokens=input_tokens,
+        input_tokens=input_usage.input_tokens,
         output_tokens=_int_value(usage.get("output_tokens")),
         thinking_tokens=thinking,
+        cache=cache,
+    )
+
+
+def _cache_usage(usage: dict[str, Any]) -> CacheUsage:
+    keys = ("cache_read_input_tokens", "cache_creation_input_tokens")
+    if not any(key in usage for key in keys):
+        return CacheUsage()
+    return CacheUsage(
+        available=True,
+        read_input_tokens=_int_value(usage.get("cache_read_input_tokens")),
+        write_input_tokens=_int_value(usage.get("cache_creation_input_tokens")),
     )
 
 
@@ -228,7 +260,26 @@ def _serialize_tool(tool: ToolDefinition) -> dict[str, Any]:
     }
 
 
-def _serialize_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
+def _serialize_tools(tools: Sequence[ToolDefinition]) -> list[dict[str, Any]]:
+    """在稳定工具前缀末端声明 Claude 的短期缓存断点。"""
+    output = [_serialize_tool(tool) for tool in tools]
+    if output:
+        output[-1]["cache_control"] = {"type": "ephemeral"}
+    return output
+
+
+def _serialize_system(instructions: str) -> list[dict[str, Any]]:
+    """稳定系统提示独立形成可缓存前缀。"""
+    return [{
+        "type": "text",
+        "text": instructions,
+        "cache_control": {"type": "ephemeral"},
+    }]
+
+
+def _serialize_messages(
+    messages: Sequence[Message], runtime_messages: Sequence[RuntimeMessage] = ()
+) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for message in messages:
         if isinstance(message.content, str):
@@ -258,6 +309,19 @@ def _serialize_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
                     }
                 )
         output.append({"role": message.role, "content": blocks})
+    if not runtime_messages:
+        return output
+
+    reminder = "\n\n".join(message.content for message in runtime_messages)
+    reminder_block = {"type": "text", "text": reminder}
+    if output and output[0].get("role") == "user":
+        content = output[0]["content"]
+        if isinstance(content, str):
+            output[0]["content"] = [reminder_block, {"type": "text", "text": content}]
+        elif isinstance(content, list):
+            output[0]["content"] = [reminder_block, *content]
+    else:
+        output.insert(0, {"role": "user", "content": [reminder_block]})
     return output
 
 

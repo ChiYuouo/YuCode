@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from mewcode.config import ProviderConfig
+from mewcode.prompting import ModelRequest, RuntimeMessage
 from mewcode.providers.base import (
     Cancellation, Message, ProviderError, StreamCancelled, ToolCallContent, ToolResultContent,
 )
@@ -16,12 +17,16 @@ def config() -> ProviderConfig:
     return ProviderConfig("openai", "gpt-test", "https://example.test/v1", "test-key")
 
 
-def collect(provider, messages, cancellation=None, tools=(), instructions=None):
+def model_request(messages, tools=(), instructions="", runtime=()):
+    return ModelRequest(tuple(messages), instructions, tuple(runtime), tuple(tools), "test-cache-key")
+
+
+def collect(provider, messages, cancellation=None, tools=(), instructions=None, runtime=()):
     async def scenario():
         return [
             event
             async for event in provider.stream(
-                messages, cancellation or Cancellation(), tools, instructions
+                model_request(messages, tools, instructions or "", runtime), cancellation or Cancellation()
             )
         ]
 
@@ -60,6 +65,7 @@ def test_streams_text_and_sends_responses_payload() -> None:
         "store": False,
         "max_output_tokens": 4096,
         "instructions": "自主完成任务",
+        "prompt_cache_key": "test-cache-key",
     }
 
 
@@ -108,6 +114,7 @@ def test_usage_is_emitted_from_completed_event() -> None:
     assert events[-1].usage is not None
     assert events[-1].usage.input_tokens == 12
     assert events[-1].usage.output_tokens == 7
+    assert events[-1].usage.cache.available is False
 
 
 def test_cancelled_stream_is_not_reported_as_network_error() -> None:
@@ -137,7 +144,7 @@ def test_cancel_interrupts_connection_establishment() -> None:
         provider = OpenAIProvider(config(), client)
 
         async def consume() -> None:
-            async for _ in provider.stream([Message("user", "你好")], cancellation):
+            async for _ in provider.stream(model_request([Message("user", "你好")]), cancellation):
                 pass
 
         task = asyncio.create_task(consume())
@@ -193,3 +200,31 @@ def test_serializes_tool_call_and_result_in_responses_input() -> None:
     assert isinstance(payload, dict)
     assert payload["input"][0]["type"] == "function_call"
     assert payload["input"][1]["type"] == "function_call_output"
+
+
+def test_sends_runtime_reminder_as_developer_message_and_reads_cache_usage() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["json"] = json.loads(request.content)
+        body = (
+            'event: response.completed\n'
+            'data: {"type":"response.completed","response":{"usage":{"input_tokens":12,"output_tokens":7,"input_tokens_details":{"cached_tokens":8,"cache_write_tokens":2}}}}\n\n'
+        )
+        return httpx.Response(200, content=body)
+
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    events = collect(
+        provider,
+        [Message("user", "你好")],
+        instructions="稳定规则",
+        runtime=(RuntimeMessage("<system-reminder>补充</system-reminder>"),),
+    )
+
+    payload = captured["json"]
+    assert isinstance(payload, dict)
+    assert payload["input"][0] == {"role": "developer", "content": "<system-reminder>补充</system-reminder>"}
+    assert payload["input"][1] == {"role": "user", "content": "你好"}
+    assert events[-1].usage is not None
+    assert events[-1].usage.cache.read_input_tokens == 8
+    assert events[-1].usage.cache.write_input_tokens == 2

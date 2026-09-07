@@ -25,8 +25,11 @@ class ReadFileTool:
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
-            "read_file", "读取工作目录内的 UTF-8 文本文件。",
-            _schema({"path": _string("要读取的相对文件路径")}, ["path"]),
+            "read_file", "读取工作目录内的 UTF-8 文本文件。调用时必须提供非空 file_path，例如 {\"file_path\": \"note.txt\"}。",
+            _schema(
+                {"file_path": _string("必须是非空的工作目录相对文件路径，例如 note.txt", min_length=1)},
+                ["file_path"],
+            ),
         )
 
     async def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str, cancellation: Cancellation) -> ToolResult:
@@ -250,14 +253,24 @@ def _schema(properties: Mapping[str, Any], required: list[str]) -> Mapping[str, 
     return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
-def _string(description: str) -> Mapping[str, str]:
-    return {"type": "string", "description": description}
+def _string(description: str, min_length: int | None = None) -> Mapping[str, Any]:
+    schema: dict[str, Any] = {"type": "string", "description": description}
+    if min_length is not None:
+        schema["minLength"] = min_length
+    return schema
 
 
 def _path_argument(arguments: Mapping[str, Any], context: ToolContext, call_id: str, name: str) -> Path | ToolResult:
-    value = arguments.get("path")
+    # read_file 对模型使用更明确的 file_path；保留 path 以兼容旧会话或内部调用。
+    value = arguments.get("file_path") if name == "read_file" else arguments.get("path")
+    if name == "read_file" and value is None:
+        value = arguments.get("path")
     if not isinstance(value, str) or not value.strip():
-        return _failure(call_id, name, "参数 path 必须是非空字符串。", "invalid_arguments")
+        parameter = "file_path" if name == "read_file" else "path"
+        hint = f"参数 {parameter} 必须是非空字符串。"
+        if name == "read_file":
+            hint += " 请重新调用 read_file，并传入工作目录相对路径，例如 {\"file_path\": \"note.txt\"}。"
+        return _failure(call_id, name, hint, "invalid_arguments")
     try:
         root = context.root.resolve(strict=True)
         candidate = (root / value).resolve(strict=False)
