@@ -33,6 +33,20 @@ Screen {
     border: round #63d8ef;
 }
 
+.mode-menu {
+    height: auto;
+    max-height: 4;
+    margin: 0 4;
+    padding: 0 1;
+    background: #202425;
+    color: #c8d2d5;
+    border: round #4b5c60;
+}
+
+.mode-menu:focus {
+    border: round #63d8ef;
+}
+
 #status-bar {
     height: 1;
     margin: 0 5 1 5;
@@ -58,16 +72,29 @@ Screen {
     text-style: italic;
 }
 
+.tool-pending {
+    color: #63d8ef;
+    text-style: italic;
+}
+
 .error-message {
     padding: 0;
 }
 
 .thinking-box {
-    margin: 0 0 1 0;
-    color: #9ba6aa;
+    margin: 0;
+    padding: 0;
+    color: #778386;
     background: transparent;
+    border: none;
 }
 
 .thinking-box > CollapsibleTitle {
-    color: #8e9b9e;
+    padding: 0;
+    color: #778386;
+    background: transparent;
+}
+
+.thinking-box:focus-within {
+    background: transparent;
 }

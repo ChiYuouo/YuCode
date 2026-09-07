@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from mewcode.tools.base import Tool, ToolContext, ToolDefinition
+from mewcode.tools.base import Tool, ToolContext, ToolDefinition, ToolSafety
 from mewcode.tools.command import RunCommandTool
 from mewcode.tools.filesystem import EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool
 
@@ -32,6 +32,13 @@ class ToolRegistry:
     @property
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(tool.definition for tool in self._tools.values())
+
+    @property
+    def read_only_definitions(self) -> tuple[ToolDefinition, ...]:
+        """返回规划模式允许暴露给模型的工具。"""
+        return tuple(
+            tool.definition for tool in self._tools.values() if tool.safety is ToolSafety.READ_ONLY
+        )
 
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)

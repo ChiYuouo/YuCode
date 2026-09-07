@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Iterator
+from typing import AsyncIterable, AsyncIterator
 
 
 @dataclass(frozen=True)
@@ -14,8 +14,8 @@ class SSEMessage:
     data: str
 
 
-def decode_sse(lines: Iterable[str]) -> Iterator[SSEMessage]:
-    """从 ``httpx.Response.iter_lines`` 的输出中逐帧解析 SSE。
+async def decode_sse(lines: AsyncIterable[str]) -> AsyncIterator[SSEMessage]:
+    """从 ``httpx.Response.aiter_lines`` 的输出中逐帧解析 SSE。
 
     SSE 以空行结束一帧，多个 ``data:`` 行需要用换行拼接。连接在
     一帧中途结束时不产出不完整事件，避免把损坏 JSON 交给 Provider。
@@ -23,7 +23,7 @@ def decode_sse(lines: Iterable[str]) -> Iterator[SSEMessage]:
     event = "message"
     data_lines: list[str] = []
 
-    for line in lines:
+    async for line in lines:
         if line == "":
             if data_lines:
                 yield SSEMessage(event=event, data="\n".join(data_lines))

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
+from contextlib import suppress
 from typing import Any
 
 import httpx
@@ -27,16 +29,17 @@ from mewcode.providers.sse import decode_sse
 class AnthropicProvider:
     """把 Claude Messages SSE 事件转换为文本和思考事件。"""
 
-    def __init__(self, config: ProviderConfig, client: httpx.Client | None = None) -> None:
+    def __init__(self, config: ProviderConfig, client: httpx.AsyncClient | None = None) -> None:
         self._config = config
         self._client = client
 
-    def stream(
+    async def stream(
         self,
         messages: Sequence[Message],
-        cancellation: Cancellation | None = None,
+        cancellation: Cancellation,
         tools: Sequence[ToolDefinition] = (),
-    ) -> Iterator[StreamEvent]:
+        instructions: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         """发送完整历史，并逐段返回 Claude 的可见输出。"""
         client, owns_client = self._get_client()
         payload: dict[str, Any] = {
@@ -47,6 +50,8 @@ class AnthropicProvider:
         }
         if tools:
             payload["tools"] = [_serialize_tool(tool) for tool in tools]
+        if instructions:
+            payload["system"] = instructions
         if self._config.thinking_enabled:
             payload["thinking"] = {"type": "adaptive", "display": "summarized"}
         headers = {
@@ -56,80 +61,89 @@ class AnthropicProvider:
         }
 
         input_tokens = 0
+        watcher: asyncio.Task[None] | None = None
+        response: httpx.Response | None = None
         try:
-            with client.stream(
+            if cancellation.is_cancelled:
+                raise StreamCancelled()
+            request = client.build_request(
                 "POST",
                 f"{self._config.base_url}/v1/messages",
                 headers=headers,
                 json=payload,
-            ) as response:
-                self._raise_for_status(response)
-                if cancellation is not None:
-                    cancellation.attach_close(response.close)
-                tool_blocks: dict[int, dict[str, Any]] = {}
-                for frame in decode_sse(response.iter_lines()):
-                    if cancellation is not None and cancellation.is_cancelled:
-                        raise StreamCancelled()
-                    event = self._decode_json(frame.data)
-                    event_type = event.get("type", frame.event)
-                    if event_type == "message_start":
-                        input_tokens = _input_tokens(event)
-                    elif event_type == "content_block_start":
-                        index = event.get("index")
-                        block = event.get("content_block")
-                        if isinstance(index, int) and isinstance(block, dict) and block.get("type") == "tool_use":
-                            name = block.get("name")
-                            call_id = block.get("id")
-                            if not isinstance(name, str) or not isinstance(call_id, str):
-                                raise ProviderError("Claude 返回了格式错误的工具调用。")
-                            tool_blocks[index] = {"id": call_id, "name": name, "parts": []}
-                    elif event_type == "content_block_delta":
-                        delta = event.get("delta")
-                        if isinstance(delta, dict):
-                            if delta.get("type") == "input_json_delta":
-                                index = event.get("index")
-                                partial = delta.get("partial_json")
-                                block = tool_blocks.get(index) if isinstance(index, int) else None
-                                if block is not None and isinstance(partial, str):
-                                    block["parts"].append(partial)
-                            else:
-                                yield from self._convert_delta(delta)
-                    elif event_type == "content_block_stop":
-                        index = event.get("index")
-                        block = tool_blocks.pop(index, None) if isinstance(index, int) else None
-                        if block is not None:
-                            arguments = "".join(block["parts"])
-                            yield StreamEvent(
-                                kind="tool_call",
-                                tool_call=ToolCall(
-                                    block["id"], block["name"], _decode_arguments(arguments, "Claude")
-                                ),
-                            )
-                    elif event_type == "error":
-                        raise ProviderError(f"Claude 流式请求失败：{_error_message(event)}")
-                    elif event_type == "message_delta":
-                        usage = _usage_from_delta(event, input_tokens)
-                        if usage is not None:
-                            yield StreamEvent(kind="usage", usage=usage)
+            )
+            response = await _send_with_cancellation(client, request, cancellation)
+            await self._raise_for_status(response)
+            watcher = asyncio.create_task(_close_on_cancel(response, cancellation))
+            tool_blocks: dict[int, dict[str, Any]] = {}
+            async for frame in decode_sse(response.aiter_lines()):
+                if cancellation.is_cancelled:
+                    raise StreamCancelled()
+                event = self._decode_json(frame.data)
+                event_type = event.get("type", frame.event)
+                if event_type == "message_start":
+                    input_tokens = _input_tokens(event)
+                elif event_type == "content_block_start":
+                    index = event.get("index")
+                    block = event.get("content_block")
+                    if isinstance(index, int) and isinstance(block, dict) and block.get("type") == "tool_use":
+                        name = block.get("name")
+                        call_id = block.get("id")
+                        if not isinstance(name, str) or not isinstance(call_id, str):
+                            raise ProviderError("Claude 返回了格式错误的工具调用。")
+                        tool_blocks[index] = {"id": call_id, "name": name, "parts": []}
+                elif event_type == "content_block_delta":
+                    delta = event.get("delta")
+                    if isinstance(delta, dict):
+                        if delta.get("type") == "input_json_delta":
+                            index = event.get("index")
+                            partial = delta.get("partial_json")
+                            block = tool_blocks.get(index) if isinstance(index, int) else None
+                            if block is not None and isinstance(partial, str):
+                                block["parts"].append(partial)
+                        else:
+                            for converted in self._convert_delta(delta):
+                                yield converted
+                elif event_type == "content_block_stop":
+                    index = event.get("index")
+                    block = tool_blocks.pop(index, None) if isinstance(index, int) else None
+                    if block is not None:
+                        arguments = "".join(block["parts"])
+                        yield StreamEvent(
+                            kind="tool_call",
+                            tool_call=ToolCall(
+                                block["id"], block["name"], _decode_arguments(arguments, "Claude")
+                            ),
+                        )
+                elif event_type == "error":
+                    raise ProviderError(f"Claude 流式请求失败：{_error_message(event)}")
+                elif event_type == "message_delta":
+                    usage = _usage_from_delta(event, input_tokens)
+                    if usage is not None:
+                        yield StreamEvent(kind="usage", usage=usage)
         except StreamCancelled:
             raise
         except ProviderError:
             raise
         except httpx.HTTPError as error:
-            if cancellation is not None and cancellation.is_cancelled:
+            if cancellation.is_cancelled:
                 raise StreamCancelled() from error
-            raise ProviderError(f"Claude 网络请求失败：{error}") from error
+            raise ProviderError(f"Claude 网络请求失败：{_http_error_message(error)}") from error
         finally:
-            if cancellation is not None:
-                cancellation.detach_close()
+            if watcher is not None:
+                watcher.cancel()
+                with suppress(asyncio.CancelledError):
+                    await watcher
+            if response is not None:
+                await response.aclose()
             if owns_client:
-                client.close()
+                await client.aclose()
 
-    def _get_client(self) -> tuple[httpx.Client, bool]:
+    def _get_client(self) -> tuple[httpx.AsyncClient, bool]:
         if self._client is not None:
             return self._client, False
         timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=30.0)
-        return httpx.Client(timeout=timeout), True
+        return httpx.AsyncClient(timeout=timeout), True
 
     @staticmethod
     def _convert_delta(delta: dict[str, Any]) -> Iterator[StreamEvent]:
@@ -153,9 +167,10 @@ class AnthropicProvider:
         return event
 
     @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
+    async def _raise_for_status(response: httpx.Response) -> None:
         if response.is_success:
             return
+        await response.aread()
         raise ProviderError(
             f"Claude 请求失败（HTTP {response.status_code}）：{_response_error_message(response)}"
         )
@@ -168,6 +183,10 @@ def _error_message(event: dict[str, Any]) -> str:
     if isinstance(event.get("message"), str):
         return event["message"]
     return "服务返回未知错误。"
+
+
+def _http_error_message(error: httpx.HTTPError) -> str:
+    return str(error) or type(error).__name__
 
 
 def _response_error_message(response: httpx.Response) -> str:
@@ -250,3 +269,36 @@ def _decode_arguments(value: str, provider: str) -> dict[str, Any]:
     if not isinstance(decoded, dict):
         raise ProviderError(f"{provider} 返回的工具参数必须是对象。")
     return decoded
+
+
+async def _close_on_cancel(response: httpx.Response, cancellation: Cancellation) -> None:
+    await cancellation.wait()
+    await response.aclose()
+
+
+async def _send_with_cancellation(
+    client: httpx.AsyncClient,
+    request: httpx.Request,
+    cancellation: Cancellation,
+) -> httpx.Response:
+    """让连接建立阶段也能被用户取消。"""
+    send_task = asyncio.create_task(client.send(request, stream=True))
+    cancel_task = asyncio.create_task(cancellation.wait())
+    done, _ = await asyncio.wait(
+        {send_task, cancel_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    if cancel_task in done and cancellation.is_cancelled:
+        if not send_task.done():
+            send_task.cancel()
+        try:
+            response = await send_task
+        except asyncio.CancelledError:
+            pass
+        else:
+            await response.aclose()
+        raise StreamCancelled()
+    cancel_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await cancel_task
+    return await send_task

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import tempfile
@@ -9,7 +10,8 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from mewcode.tools.base import ToolContext, ToolDefinition, ToolResult
+from mewcode.cancellation import Cancellation
+from mewcode.tools.base import ToolContext, ToolDefinition, ToolResult, ToolSafety
 
 MAX_READ_BYTES = 1_048_576
 MAX_RESULT_CHARS = 12_000
@@ -18,6 +20,8 @@ SKIPPED_DIRECTORIES = {".git", ".venv", "__pycache__", ".pytest_cache", "dist"}
 
 
 class ReadFileTool:
+    safety = ToolSafety.READ_ONLY
+
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -25,7 +29,12 @@ class ReadFileTool:
             _schema({"path": _string("要读取的相对文件路径")}, ["path"]),
         )
 
-    def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
+    async def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str, cancellation: Cancellation) -> ToolResult:
+        if cancellation.is_cancelled:
+            return _cancelled(call_id, self.definition.name)
+        return await asyncio.to_thread(self._execute, arguments, context, call_id)
+
+    def _execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
         path_or_error = _path_argument(arguments, context, call_id, self.definition.name)
         if isinstance(path_or_error, ToolResult):
             return path_or_error
@@ -52,6 +61,8 @@ class ReadFileTool:
 
 
 class WriteFileTool:
+    safety = ToolSafety.SIDE_EFFECT
+
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -62,7 +73,12 @@ class WriteFileTool:
             ),
         )
 
-    def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
+    async def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str, cancellation: Cancellation) -> ToolResult:
+        if cancellation.is_cancelled:
+            return _cancelled(call_id, self.definition.name)
+        return await asyncio.to_thread(self._execute, arguments, context, call_id)
+
+    def _execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
         path_or_error = _path_argument(arguments, context, call_id, self.definition.name)
         if isinstance(path_or_error, ToolResult):
             return path_or_error
@@ -79,6 +95,8 @@ class WriteFileTool:
 
 
 class EditFileTool:
+    safety = ToolSafety.SIDE_EFFECT
+
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -93,7 +111,12 @@ class EditFileTool:
             ),
         )
 
-    def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
+    async def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str, cancellation: Cancellation) -> ToolResult:
+        if cancellation.is_cancelled:
+            return _cancelled(call_id, self.definition.name)
+        return await asyncio.to_thread(self._execute, arguments, context, call_id)
+
+    def _execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
         path_or_error = _path_argument(arguments, context, call_id, self.definition.name)
         if isinstance(path_or_error, ToolResult):
             return path_or_error
@@ -127,6 +150,8 @@ class EditFileTool:
 
 
 class FindFilesTool:
+    safety = ToolSafety.READ_ONLY
+
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -134,7 +159,12 @@ class FindFilesTool:
             _schema({"pattern": _string("glob 模式，例如 **/*.py")}, ["pattern"]),
         )
 
-    def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
+    async def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str, cancellation: Cancellation) -> ToolResult:
+        if cancellation.is_cancelled:
+            return _cancelled(call_id, self.definition.name)
+        return await asyncio.to_thread(self._execute, arguments, context, call_id)
+
+    def _execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
         pattern = arguments.get("pattern")
         if not isinstance(pattern, str) or not pattern:
             return _failure(call_id, self.definition.name, "参数 pattern 必须是非空字符串。", "invalid_arguments")
@@ -154,6 +184,8 @@ class FindFilesTool:
 
 
 class SearchCodeTool:
+    safety = ToolSafety.READ_ONLY
+
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -164,7 +196,12 @@ class SearchCodeTool:
             ),
         )
 
-    def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
+    async def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str, cancellation: Cancellation) -> ToolResult:
+        if cancellation.is_cancelled:
+            return _cancelled(call_id, self.definition.name)
+        return await asyncio.to_thread(self._execute, arguments, context, call_id)
+
+    def _execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
         pattern = arguments.get("pattern")
         if not isinstance(pattern, str) or not pattern:
             return _failure(call_id, self.definition.name, "参数 pattern 必须是非空字符串。", "invalid_arguments")
@@ -273,3 +310,7 @@ def _is_workspace_file(path: Path, root: Path) -> bool:
 
 def _failure(call_id: str, name: str, summary: str, code: str) -> ToolResult:
     return ToolResult(call_id, name, False, summary, error_code=code)
+
+
+def _cancelled(call_id: str, name: str) -> ToolResult:
+    return _failure(call_id, name, "用户已取消，工具未执行。", "cancelled")

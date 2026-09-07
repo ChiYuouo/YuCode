@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -17,6 +18,18 @@ def config(thinking_enabled: bool = False) -> ProviderConfig:
     )
 
 
+def collect(provider, messages, cancellation=None, tools=(), instructions=None):
+    async def scenario():
+        return [
+            event
+            async for event in provider.stream(
+                messages, cancellation or Cancellation(), tools, instructions
+            )
+        ]
+
+    return asyncio.run(scenario())
+
+
 def test_streams_text_and_thinking_in_order() -> None:
     captured: dict[str, object] = {}
 
@@ -33,10 +46,10 @@ def test_streams_text_and_thinking_in_order() -> None:
         return httpx.Response(200, content=body)
 
     provider = AnthropicProvider(
-        config(thinking_enabled=True), httpx.Client(transport=httpx.MockTransport(handler))
+        config(thinking_enabled=True), httpx.AsyncClient(transport=httpx.MockTransport(handler))
     )
 
-    events = list(provider.stream([Message("user", "问题")]))
+    events = collect(provider, [Message("user", "问题")], instructions="只制定计划")
 
     assert [(event.kind, event.content) for event in events] == [
         ("thinking", "分析"),
@@ -45,6 +58,7 @@ def test_streams_text_and_thinking_in_order() -> None:
     assert captured["url"] == "https://example.test/v1/messages"
     assert captured["headers"]["x-api-key"] == "test-key"
     assert captured["json"]["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert captured["json"]["system"] == "只制定计划"
 
 
 def test_omits_thinking_when_disabled() -> None:
@@ -54,9 +68,9 @@ def test_omits_thinking_when_disabled() -> None:
         captured["json"] = json.loads(request.content)
         return httpx.Response(200, content="")
 
-    provider = AnthropicProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = AnthropicProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
-    assert list(provider.stream([Message("user", "问题")])) == []
+    assert collect(provider, [Message("user", "问题")]) == []
     assert "thinking" not in captured["json"]
 
 
@@ -65,20 +79,29 @@ def test_converts_sse_error_to_provider_error() -> None:
         body = 'event: error\ndata: {"type":"error","error":{"message":"认证失败"}}\n\n'
         return httpx.Response(200, content=body)
 
-    provider = AnthropicProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = AnthropicProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
     with pytest.raises(ProviderError, match="认证失败"):
-        list(provider.stream([Message("user", "问题")]))
+        collect(provider, [Message("user", "问题")])
 
 
 def test_converts_http_error_to_provider_error() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": {"message": "无效密钥"}})
 
-    provider = AnthropicProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = AnthropicProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
     with pytest.raises(ProviderError, match="无效密钥"):
-        list(provider.stream([Message("user", "问题")]))
+        collect(provider, [Message("user", "问题")])
+
+
+def test_names_network_error_when_message_is_empty() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("", request=request)
+
+    provider = AnthropicProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ProviderError, match="ConnectTimeout"):
+        collect(provider, [Message("user", "问题")])
 
 
 def test_usage_includes_thinking_tokens() -> None:
@@ -91,9 +114,9 @@ def test_usage_includes_thinking_tokens() -> None:
         )
         return httpx.Response(200, content=body)
 
-    provider = AnthropicProvider(config(True), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = AnthropicProvider(config(True), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
-    events = list(provider.stream([Message("user", "问题")]))
+    events = collect(provider, [Message("user", "问题")])
 
     assert events[-1].usage is not None
     assert events[-1].usage.input_tokens == 14
@@ -108,10 +131,39 @@ def test_cancelled_stream_is_not_reported_as_network_error() -> None:
 
     cancellation = Cancellation()
     cancellation.cancel()
-    provider = AnthropicProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = AnthropicProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
     with pytest.raises(StreamCancelled):
-        list(provider.stream([Message("user", "问题")], cancellation))
+        collect(provider, [Message("user", "问题")], cancellation)
+
+
+def test_cancel_interrupts_connection_establishment() -> None:
+    async def scenario() -> None:
+        handler_started = asyncio.Event()
+
+        async def handler(_: httpx.Request) -> httpx.Response:
+            handler_started.set()
+            await asyncio.sleep(10)
+            return httpx.Response(200, content="")
+
+        cancellation = Cancellation()
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        provider = AnthropicProvider(config(), client)
+
+        async def consume() -> None:
+            async for _ in provider.stream([Message("user", "问题")], cancellation):
+                pass
+
+        task = asyncio.create_task(consume())
+        await handler_started.wait()
+        cancellation.cancel()
+        try:
+            with pytest.raises(StreamCancelled):
+                await asyncio.wait_for(task, timeout=0.5)
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_accumulates_streamed_tool_arguments_and_sends_tool_schema() -> None:
@@ -131,9 +183,9 @@ def test_accumulates_streamed_tool_arguments_and_sends_tool_schema() -> None:
         )
         return httpx.Response(200, content=body)
 
-    provider = AnthropicProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = AnthropicProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     definition = ToolDefinition("read_file", "读取文件", {"type": "object", "properties": {}})
-    events = list(provider.stream([Message("user", "读 README")], tools=[definition]))
+    events = collect(provider, [Message("user", "读 README")], tools=[definition])
 
     assert events[-1].tool_call == ToolCall("tool-1", "read_file", {"path": "README.md"})
     payload = captured["json"]
@@ -148,10 +200,10 @@ def test_serializes_tool_use_and_result_content_blocks() -> None:
         captured["json"] = json.loads(request.content)
         return httpx.Response(200, content="")
 
-    provider = AnthropicProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = AnthropicProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     call = ToolCall("tool-1", "read_file", {"path": "README.md"})
     result = ToolResult("tool-1", "read_file", False, "拒绝", error_code="user_rejected")
-    list(provider.stream([Message("assistant", (ToolCallContent(call),)), Message("user", (ToolResultContent(result),))]))
+    collect(provider, [Message("assistant", (ToolCallContent(call),)), Message("user", (ToolResultContent(result),))])
 
     payload = captured["json"]
     assert isinstance(payload, dict)

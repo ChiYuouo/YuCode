@@ -3,8 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Protocol
+
+from mewcode.cancellation import Cancellation
+
+
+class ToolSafety(str, Enum):
+    """工具执行对工作区的影响分类。"""
+
+    READ_ONLY = "read_only"
+    SIDE_EFFECT = "side_effect"
 
 
 @dataclass(frozen=True)
@@ -62,5 +72,15 @@ class Tool(Protocol):
     def definition(self) -> ToolDefinition:
         """返回工具的模型元信息。"""
 
-    def execute(self, arguments: Mapping[str, Any], context: ToolContext, call_id: str) -> ToolResult:
+    @property
+    def safety(self) -> ToolSafety:
+        """返回用于批次调度的安全分类。"""
+
+    async def execute(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+        call_id: str,
+        cancellation: Cancellation,
+    ) -> ToolResult:
         """执行调用并始终返回结构化结果。"""

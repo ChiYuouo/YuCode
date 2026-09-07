@@ -25,7 +25,22 @@ class ProviderConfig:
     thinking_enabled: bool = False
 
 
-def load_config(path: Path | None = None) -> ProviderConfig:
+@dataclass(frozen=True)
+class AgentConfig:
+    """Agent Loop 的安全配置。"""
+
+    max_iterations: int = 10
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    """MewCode 的完整应用配置。"""
+
+    provider: ProviderConfig
+    agent: AgentConfig = AgentConfig()
+
+
+def load_config(path: Path | None = None) -> AppConfig:
     """从指定路径或当前目录的 ``mewcode.yaml`` 加载配置。"""
     config_path = path or Path.cwd() / "mewcode.yaml"
     if not config_path.is_file():
@@ -50,16 +65,20 @@ def load_config(path: Path | None = None) -> ProviderConfig:
     _validate_url(base_url)
     api_key = _required_text(raw, "api_key")
     thinking_enabled = _parse_thinking(raw.get("thinking"))
+    agent = _parse_agent(raw.get("agent"))
 
     if protocol == "openai" and thinking_enabled:
         raise ConfigError("thinking.enabled 仅支持 anthropic 协议。")
 
-    return ProviderConfig(
-        protocol=protocol,
-        model=model,
-        base_url=base_url,
-        api_key=api_key,
-        thinking_enabled=thinking_enabled,
+    return AppConfig(
+        provider=ProviderConfig(
+            protocol=protocol,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            thinking_enabled=thinking_enabled,
+        ),
+        agent=agent,
     )
 
 
@@ -85,3 +104,14 @@ def _parse_thinking(value: Any) -> bool:
     if not isinstance(enabled, bool):
         raise ConfigError("thinking.enabled 必须是 true 或 false。")
     return enabled
+
+
+def _parse_agent(value: Any) -> AgentConfig:
+    if value is None:
+        return AgentConfig()
+    if not isinstance(value, Mapping):
+        raise ConfigError("agent 必须是包含 max_iterations 的键值对象。")
+    max_iterations = value.get("max_iterations", 10)
+    if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
+        raise ConfigError("agent.max_iterations 必须是正整数。")
+    return AgentConfig(max_iterations=max_iterations)

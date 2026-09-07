@@ -25,9 +25,19 @@ thinking:
 
     config = load_config(path)
 
-    assert config.protocol == "anthropic"
-    assert config.base_url == "https://api.anthropic.com"
-    assert config.thinking_enabled is True
+    assert config.provider.protocol == "anthropic"
+    assert config.provider.base_url == "https://api.anthropic.com"
+    assert config.provider.thinking_enabled is True
+    assert config.agent.max_iterations == 10
+
+
+def test_loads_agent_iteration_override(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\nagent:\n  max_iterations: 3\n",
+    )
+
+    assert load_config(path).agent.max_iterations == 3
 
 
 @pytest.mark.parametrize(
@@ -37,6 +47,9 @@ thinking:
         ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: secret\nthinking:\n  enabled: true", "thinking"),
         ("protocol: openai\nmodel: x\nbase_url: no-url\napi_key: secret", "base_url"),
         ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: ''", "api_key"),
+        ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: secret\nagent: []", "agent"),
+        ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: secret\nagent:\n  max_iterations: 0", "max_iterations"),
+        ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: secret\nagent:\n  max_iterations: true", "max_iterations"),
     ],
 )
 def test_rejects_invalid_config_without_leaking_key(

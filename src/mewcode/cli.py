@@ -6,7 +6,9 @@ from pathlib import Path
 
 from rich.console import Console
 
+from mewcode.agent import Agent
 from mewcode.config import ConfigError, ProviderConfig, load_config
+from mewcode.conversation import Conversation
 from mewcode.providers.anthropic import AnthropicProvider
 from mewcode.providers.base import Provider
 from mewcode.providers.openai import OpenAIProvider
@@ -23,7 +25,14 @@ def main() -> None:
         console.print(f"配置错误：{error}", style="red")
         return
 
-    ChatApp(create_provider(config), config, ToolRegistry(Path.cwd())).run()
+    registry = ToolRegistry(Path.cwd())
+    agent = Agent(
+        create_provider(config.provider),
+        Conversation(),
+        registry,
+        config.agent.max_iterations,
+    )
+    ChatApp(agent, config.provider).run()
 
 
 def create_provider(config: ProviderConfig) -> Provider:

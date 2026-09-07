@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from threading import Event, Lock
-from typing import Callable, Iterator, Literal, Protocol, Sequence
+from typing import AsyncIterator, Literal, Protocol, Sequence
 
+from mewcode.cancellation import Cancellation
 from mewcode.tools.base import ToolCall, ToolDefinition, ToolResult
 
 
@@ -74,46 +74,14 @@ class StreamCancelled(RuntimeError):
     """用户主动停止当前生成。"""
 
 
-class Cancellation:
-    """可从 UI 线程安全取消阻塞 HTTP 流的控制器。"""
-
-    def __init__(self) -> None:
-        self._event = Event()
-        self._lock = Lock()
-        self._close: Callable[[], None] | None = None
-
-    @property
-    def is_cancelled(self) -> bool:
-        return self._event.is_set()
-
-    def attach_close(self, callback: Callable[[], None]) -> None:
-        with self._lock:
-            cancelled = self._event.is_set()
-            if not cancelled:
-                self._close = callback
-        if cancelled:
-            callback()
-
-    def detach_close(self) -> None:
-        with self._lock:
-            self._close = None
-
-    def cancel(self) -> None:
-        self._event.set()
-        with self._lock:
-            callback = self._close
-            self._close = None
-        if callback is not None:
-            callback()
-
-
 class Provider(Protocol):
     """任何可流式生成文本的模型后端。"""
 
-    def stream(
+    async def stream(
         self,
         messages: Sequence[Message],
-        cancellation: Cancellation | None = None,
+        cancellation: Cancellation,
         tools: Sequence[ToolDefinition] = (),
-    ) -> Iterator[StreamEvent]:
+        instructions: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         """使用完整历史生成统一流事件。"""

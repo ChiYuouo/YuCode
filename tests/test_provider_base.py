@@ -1,3 +1,5 @@
+import asyncio
+
 from mewcode.providers.base import Cancellation, StreamEvent, Usage
 
 
@@ -8,13 +10,18 @@ def test_usage_event_carries_token_totals() -> None:
     assert event.usage == usage
 
 
-def test_cancellation_calls_active_close_once_and_is_idempotent() -> None:
-    calls: list[str] = []
-    cancellation = Cancellation()
-    cancellation.attach_close(lambda: calls.append("closed"))
+def test_cancellation_waits_and_is_idempotent() -> None:
+    async def scenario() -> None:
+        cancellation = Cancellation()
+        waiter = asyncio.create_task(cancellation.wait())
+        await asyncio.sleep(0)
+        assert waiter.done() is False
 
-    cancellation.cancel()
-    cancellation.cancel()
+        cancellation.cancel()
+        cancellation.cancel()
+        await waiter
 
-    assert cancellation.is_cancelled is True
-    assert calls == ["closed"]
+        assert cancellation.is_cancelled is True
+        await cancellation.wait()
+
+    asyncio.run(scenario())

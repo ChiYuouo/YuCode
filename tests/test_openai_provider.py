@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -13,6 +14,18 @@ from mewcode.tools.base import ToolCall, ToolDefinition, ToolResult
 
 def config() -> ProviderConfig:
     return ProviderConfig("openai", "gpt-test", "https://example.test/v1", "test-key")
+
+
+def collect(provider, messages, cancellation=None, tools=(), instructions=None):
+    async def scenario():
+        return [
+            event
+            async for event in provider.stream(
+                messages, cancellation or Cancellation(), tools, instructions
+            )
+        ]
+
+    return asyncio.run(scenario())
 
 
 def test_streams_text_and_sends_responses_payload() -> None:
@@ -32,10 +45,10 @@ def test_streams_text_and_sends_responses_payload() -> None:
         )
         return httpx.Response(200, content=body)
 
-    client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     provider = OpenAIProvider(config(), client)
 
-    events = list(provider.stream([Message("user", "你好")]))
+    events = collect(provider, [Message("user", "你好")], instructions="自主完成任务")
 
     assert [event.content for event in events] == ["你", "好"]
     assert captured["url"] == "https://example.test/v1/responses"
@@ -46,6 +59,7 @@ def test_streams_text_and_sends_responses_payload() -> None:
         "stream": True,
         "store": False,
         "max_output_tokens": 4096,
+        "instructions": "自主完成任务",
     }
 
 
@@ -54,20 +68,29 @@ def test_converts_sse_error_to_provider_error() -> None:
         body = 'event: response.error\ndata: {"type":"response.error","error":{"message":"额度不足"}}\n\n'
         return httpx.Response(200, content=body)
 
-    provider = OpenAIProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
     with pytest.raises(ProviderError, match="额度不足"):
-        list(provider.stream([Message("user", "你好")]))
+        collect(provider, [Message("user", "你好")])
 
 
 def test_converts_http_error_to_provider_error() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": {"message": "认证失败"}})
 
-    provider = OpenAIProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
     with pytest.raises(ProviderError, match="认证失败"):
-        list(provider.stream([Message("user", "你好")]))
+        collect(provider, [Message("user", "你好")])
+
+
+def test_names_network_error_when_message_is_empty() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("", request=request)
+
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ProviderError, match="ConnectTimeout"):
+        collect(provider, [Message("user", "你好")])
 
 
 def test_usage_is_emitted_from_completed_event() -> None:
@@ -78,9 +101,9 @@ def test_usage_is_emitted_from_completed_event() -> None:
         )
         return httpx.Response(200, content=body)
 
-    provider = OpenAIProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
-    events = list(provider.stream([Message("user", "你好")]))
+    events = collect(provider, [Message("user", "你好")])
 
     assert events[-1].usage is not None
     assert events[-1].usage.input_tokens == 12
@@ -94,10 +117,39 @@ def test_cancelled_stream_is_not_reported_as_network_error() -> None:
 
     cancellation = Cancellation()
     cancellation.cancel()
-    provider = OpenAIProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
     with pytest.raises(StreamCancelled):
-        list(provider.stream([Message("user", "你好")], cancellation))
+        collect(provider, [Message("user", "你好")], cancellation)
+
+
+def test_cancel_interrupts_connection_establishment() -> None:
+    async def scenario() -> None:
+        handler_started = asyncio.Event()
+
+        async def handler(_: httpx.Request) -> httpx.Response:
+            handler_started.set()
+            await asyncio.sleep(10)
+            return httpx.Response(200, content="")
+
+        cancellation = Cancellation()
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        provider = OpenAIProvider(config(), client)
+
+        async def consume() -> None:
+            async for _ in provider.stream([Message("user", "你好")], cancellation):
+                pass
+
+        task = asyncio.create_task(consume())
+        await handler_started.wait()
+        cancellation.cancel()
+        try:
+            with pytest.raises(StreamCancelled):
+                await asyncio.wait_for(task, timeout=0.5)
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_accumulates_streamed_tool_arguments_and_sends_tool_schema() -> None:
@@ -115,9 +167,9 @@ def test_accumulates_streamed_tool_arguments_and_sends_tool_schema() -> None:
         )
         return httpx.Response(200, content=body)
 
-    provider = OpenAIProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     definition = ToolDefinition("read_file", "读取文件", {"type": "object", "properties": {}})
-    events = list(provider.stream([Message("user", "读 README")], tools=[definition]))
+    events = collect(provider, [Message("user", "读 README")], tools=[definition])
 
     assert events[-1].tool_call == ToolCall("call-1", "read_file", {"path": "README.md"})
     payload = captured["json"]
@@ -132,10 +184,10 @@ def test_serializes_tool_call_and_result_in_responses_input() -> None:
         captured["json"] = json.loads(request.content)
         return httpx.Response(200, content="")
 
-    provider = OpenAIProvider(config(), httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     call = ToolCall("call-1", "read_file", {"path": "README.md"})
     result = ToolResult("call-1", "read_file", True, "已读取", "内容")
-    list(provider.stream([Message("assistant", (ToolCallContent(call),)), Message("user", (ToolResultContent(result),))]))
+    collect(provider, [Message("assistant", (ToolCallContent(call),)), Message("user", (ToolResultContent(result),))])
 
     payload = captured["json"]
     assert isinstance(payload, dict)
