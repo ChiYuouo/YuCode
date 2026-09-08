@@ -10,9 +10,9 @@ from typing import Any
 
 import httpx
 
-from mewcode.config import ProviderConfig
-from mewcode.prompting import ModelRequest, RuntimeMessage
-from mewcode.providers.base import (
+from yucode.config import ProviderConfig
+from yucode.prompting import ModelRequest, RuntimeMessage
+from yucode.providers.base import (
     CacheUsage,
     Cancellation,
     Message,
@@ -24,8 +24,8 @@ from mewcode.providers.base import (
     ToolResultContent,
     Usage,
 )
-from mewcode.tools.base import ToolCall, ToolDefinition
-from mewcode.providers.sse import decode_sse
+from yucode.tools.base import ToolCall, ToolDefinition
+from yucode.providers.sse import decode_sse
 
 
 class AnthropicProvider:

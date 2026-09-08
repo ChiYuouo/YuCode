@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from mewcode.tools.base import ToolCall, ToolResult
-from mewcode.workflow import ToolWorkflow
+from yucode.tools.base import ToolCall, ToolResult
+from yucode.workflow import ToolWorkflow
 
 
 def call(name: str, path: str = "a.txt") -> ToolCall:

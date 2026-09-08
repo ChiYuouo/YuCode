@@ -1,26 +1,26 @@
-# MewCode Agent Loop Tasks
+# YuCode Agent Loop Tasks
 
 ## 文件清单
 
 | 操作 | 文件 | 职责 |
 |---|---|---|
-| 新建 | `src/mewcode/agent.py` | Agent Loop、模式、事件、进度与停止原因 |
-| 新建 | `src/mewcode/cancellation.py` | Provider 与工具共享的异步取消信号 |
-| 修改 | `src/mewcode/config.py` | 应用配置、Agent 配置和迭代上限校验 |
-| 修改 | `src/mewcode/conversation.py` | 从单工具状态机改为纯历史管理 |
-| 修改 | `src/mewcode/cli.py` | 创建并装配 Agent 依赖 |
-| 修改 | `src/mewcode/providers/base.py` | 异步 Provider 协议与兼容事件模型 |
-| 修改 | `src/mewcode/providers/sse.py` | 异步 SSE 解码 |
-| 修改 | `src/mewcode/providers/openai.py` | OpenAI 异步流和模式指令 |
-| 修改 | `src/mewcode/providers/anthropic.py` | Claude 异步流和模式指令 |
-| 修改 | `src/mewcode/tools/base.py` | 工具安全分类与异步协议 |
-| 修改 | `src/mewcode/tools/registry.py` | 按安全分类筛选工具 |
-| 修改 | `src/mewcode/tools/executor.py` | 顺序屏障、并发批次、确认与异常包装 |
-| 修改 | `src/mewcode/tools/filesystem.py` | 文件工具异步包装与取消边界 |
-| 修改 | `src/mewcode/tools/command.py` | 可取消、可超时的异步命令进程 |
-| 修改 | `src/mewcode/tools/__init__.py` | 导出新增工具类型 |
-| 修改 | `src/mewcode/tui/app.py` | 模式解析、异步事件消费、确认与取消 |
-| 修改 | `src/mewcode/tui/widgets.py` | Agent 进度和停止状态展示 |
+| 新建 | `src/yucode/agent.py` | Agent Loop、模式、事件、进度与停止原因 |
+| 新建 | `src/yucode/cancellation.py` | Provider 与工具共享的异步取消信号 |
+| 修改 | `src/yucode/config.py` | 应用配置、Agent 配置和迭代上限校验 |
+| 修改 | `src/yucode/conversation.py` | 从单工具状态机改为纯历史管理 |
+| 修改 | `src/yucode/cli.py` | 创建并装配 Agent 依赖 |
+| 修改 | `src/yucode/providers/base.py` | 异步 Provider 协议与兼容事件模型 |
+| 修改 | `src/yucode/providers/sse.py` | 异步 SSE 解码 |
+| 修改 | `src/yucode/providers/openai.py` | OpenAI 异步流和模式指令 |
+| 修改 | `src/yucode/providers/anthropic.py` | Claude 异步流和模式指令 |
+| 修改 | `src/yucode/tools/base.py` | 工具安全分类与异步协议 |
+| 修改 | `src/yucode/tools/registry.py` | 按安全分类筛选工具 |
+| 修改 | `src/yucode/tools/executor.py` | 顺序屏障、并发批次、确认与异常包装 |
+| 修改 | `src/yucode/tools/filesystem.py` | 文件工具异步包装与取消边界 |
+| 修改 | `src/yucode/tools/command.py` | 可取消、可超时的异步命令进程 |
+| 修改 | `src/yucode/tools/__init__.py` | 导出新增工具类型 |
+| 修改 | `src/yucode/tui/app.py` | 模式解析、异步事件消费、确认与取消 |
+| 修改 | `src/yucode/tui/widgets.py` | Agent 进度和停止状态展示 |
 | 新建 | `tests/test_agent.py` | 循环、事件、模式和停止条件测试 |
 | 修改 | `tests/test_provider_base.py` | 异步取消和 Provider 基础类型测试 |
 | 修改 | `tests/test_sse.py` | 异步 SSE 测试 |
@@ -34,7 +34,7 @@
 
 ## T1：建立共享异步取消信号
 
-**文件：** `src/mewcode/cancellation.py`、`src/mewcode/providers/base.py`、`tests/test_provider_base.py`
+**文件：** `src/yucode/cancellation.py`、`src/yucode/providers/base.py`、`tests/test_provider_base.py`
 
 **依赖：** 无
 
@@ -47,7 +47,7 @@
 
 ## T2：加入 Agent 迭代配置
 
-**文件：** `src/mewcode/config.py`、`tests/test_config.py`
+**文件：** `src/yucode/config.py`、`tests/test_config.py`
 
 **依赖：** 无
 
@@ -60,7 +60,7 @@
 
 ## T3：增加异步 SSE 解码器
 
-**文件：** `src/mewcode/providers/sse.py`、`tests/test_sse.py`
+**文件：** `src/yucode/providers/sse.py`、`tests/test_sse.py`
 
 **依赖：** 无
 
@@ -73,7 +73,7 @@
 
 ## T4：定义异步 Provider 协议
 
-**文件：** `src/mewcode/providers/base.py`、`tests/test_provider_base.py`
+**文件：** `src/yucode/providers/base.py`、`tests/test_provider_base.py`
 
 **依赖：** T1
 
@@ -86,7 +86,7 @@
 
 ## T5：迁移 OpenAI 异步网络流
 
-**文件：** `src/mewcode/providers/openai.py`、`tests/test_openai_provider.py`
+**文件：** `src/yucode/providers/openai.py`、`tests/test_openai_provider.py`
 
 **依赖：** T1、T3、T4
 
@@ -99,7 +99,7 @@
 
 ## T6：完成 OpenAI 工具、指令与用量适配
 
-**文件：** `src/mewcode/providers/openai.py`、`tests/test_openai_provider.py`
+**文件：** `src/yucode/providers/openai.py`、`tests/test_openai_provider.py`
 
 **依赖：** T5
 
@@ -112,7 +112,7 @@
 
 ## T7：迁移 Claude 异步网络流
 
-**文件：** `src/mewcode/providers/anthropic.py`、`tests/test_anthropic_provider.py`
+**文件：** `src/yucode/providers/anthropic.py`、`tests/test_anthropic_provider.py`
 
 **依赖：** T1、T3、T4
 
@@ -125,7 +125,7 @@
 
 ## T8：完成 Claude 工具、指令与用量适配
 
-**文件：** `src/mewcode/providers/anthropic.py`、`tests/test_anthropic_provider.py`
+**文件：** `src/yucode/providers/anthropic.py`、`tests/test_anthropic_provider.py`
 
 **依赖：** T7
 
@@ -138,7 +138,7 @@
 
 ## T9：标记工具安全分类
 
-**文件：** `src/mewcode/tools/base.py`、`src/mewcode/tools/registry.py`、`src/mewcode/tools/__init__.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/base.py`、`src/yucode/tools/registry.py`、`src/yucode/tools/__init__.py`、`tests/test_tools.py`
 
 **依赖：** T1
 
@@ -151,7 +151,7 @@
 
 ## T10：异步包装文件工具
 
-**文件：** `src/mewcode/tools/base.py`、`src/mewcode/tools/filesystem.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/base.py`、`src/yucode/tools/filesystem.py`、`tests/test_tools.py`
 
 **依赖：** T1、T9
 
@@ -164,7 +164,7 @@
 
 ## T11：实现可取消的异步命令
 
-**文件：** `src/mewcode/tools/command.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/command.py`、`tests/test_tools.py`
 
 **依赖：** T1、T9
 
@@ -178,7 +178,7 @@
 
 ## T12：实现顺序屏障与并发批次
 
-**文件：** `src/mewcode/tools/executor.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/executor.py`、`tests/test_tools.py`
 
 **依赖：** T9、T10、T11
 
@@ -192,7 +192,7 @@
 
 ## T13：将 Conversation 收敛为历史存储
 
-**文件：** `src/mewcode/conversation.py`、`tests/test_conversation.py`
+**文件：** `src/yucode/conversation.py`、`tests/test_conversation.py`
 
 **依赖：** T4
 
@@ -206,7 +206,7 @@
 
 ## T14：定义 Agent 事件与双路流收集
 
-**文件：** `src/mewcode/agent.py`、`tests/test_agent.py`
+**文件：** `src/yucode/agent.py`、`tests/test_agent.py`
 
 **依赖：** T4、T13
 
@@ -220,7 +220,7 @@
 
 ## T15：实现多轮工具循环与两种模式
 
-**文件：** `src/mewcode/agent.py`、`tests/test_agent.py`
+**文件：** `src/yucode/agent.py`、`tests/test_agent.py`
 
 **依赖：** T6、T8、T12、T14
 
@@ -234,7 +234,7 @@
 
 ## T16：实现全部停止条件
 
-**文件：** `src/mewcode/agent.py`、`tests/test_agent.py`
+**文件：** `src/yucode/agent.py`、`tests/test_agent.py`
 
 **依赖：** T15
 
@@ -248,7 +248,7 @@
 
 ## T17：接入 TUI 模式入口与 Agent 事件
 
-**文件：** `src/mewcode/tui/app.py`、`src/mewcode/tui/widgets.py`、`tests/test_tui.py`
+**文件：** `src/yucode/tui/app.py`、`src/yucode/tui/widgets.py`、`tests/test_tui.py`
 
 **依赖：** T14、T15、T16
 
@@ -262,7 +262,7 @@
 
 ## T18：异步化命令确认与 TUI 取消
 
-**文件：** `src/mewcode/tui/app.py`、`tests/test_tui.py`
+**文件：** `src/yucode/tui/app.py`、`tests/test_tui.py`
 
 **依赖：** T11、T12、T17
 
@@ -275,7 +275,7 @@
 
 ## T19：完成 CLI 对象装配与兼容迁移
 
-**文件：** `src/mewcode/cli.py`、`src/mewcode/providers/__init__.py`、`src/mewcode/tools/__init__.py`、`tests/test_cli.py`
+**文件：** `src/yucode/cli.py`、`src/yucode/providers/__init__.py`、`src/yucode/tools/__init__.py`、`tests/test_cli.py`
 
 **依赖：** T2、T6、T8、T12、T13、T16、T18
 
@@ -295,7 +295,7 @@
 
 **步骤：**
 1. 运行全部自动化测试并修复回归，确认没有遗留同步 Provider 或旧单工具状态机引用。
-2. 在 tmux 中启动 MewCode，执行一个需要“读取 → 修改 → 再读取验证 → 最终回复”的真实普通请求。
+2. 在 tmux 中启动 YuCode，执行一个需要“读取 → 修改 → 再读取验证 → 最终回复”的真实普通请求。
 3. 在 tmux 中分别验证 `/plan` 只读规划、带内容 `/do` 执行、空 `/do` 用法提示和 Ctrl+C 取消。
 4. 对 OpenAI 与 Claude 各完成一次真实 Agent Loop；记录迭代、工具顺序、停止原因和最终结果。
 5. 逐项执行 `checklist.md` 并记录实际观察结果与通过状态。
@@ -325,15 +325,15 @@ T2 ─────────────────────────�
 
 | 操作 | 文件 | 职责 |
 |---|---|---|
-| 修改 | `src/mewcode/tui/widgets.py` | 活动指示器、思考标题帧和进行中工具行 |
-| 修改 | `src/mewcode/tui/app.py` | 请求级动画时钟与 Agent 事件映射 |
-| 修改 | `src/mewcode/tui/app.tcss` | 活动与完成状态的终端样式 |
+| 修改 | `src/yucode/tui/widgets.py` | 活动指示器、思考标题帧和进行中工具行 |
+| 修改 | `src/yucode/tui/app.py` | 请求级动画时钟与 Agent 事件映射 |
+| 修改 | `src/yucode/tui/app.tcss` | 活动与完成状态的终端样式 |
 | 修改 | `tests/test_tui.py` | 动效、工具替换和终止状态测试 |
 | 修改 | `doc/ch3/checklist.md` | 记录本次验收结果 |
 
 ## T21：实现可停止的活动显示组件
 
-**文件：** `src/mewcode/tui/widgets.py`、`tests/test_tui.py`
+**文件：** `src/yucode/tui/widgets.py`、`tests/test_tui.py`
 
 **依赖：** 无
 
@@ -346,7 +346,7 @@ T2 ─────────────────────────�
 
 ## T22：接入请求级动画时钟与工具事件
 
-**文件：** `src/mewcode/tui/app.py`、`tests/test_tui.py`
+**文件：** `src/yucode/tui/app.py`、`tests/test_tui.py`
 
 **依赖：** T21
 
@@ -360,7 +360,7 @@ T2 ─────────────────────────�
 
 ## T23：完成终端视觉样式与回归测试
 
-**文件：** `src/mewcode/tui/app.tcss`、`tests/test_tui.py`
+**文件：** `src/yucode/tui/app.tcss`、`tests/test_tui.py`
 
 **依赖：** T21、T22
 
@@ -379,7 +379,7 @@ T2 ─────────────────────────�
 
 **步骤：**
 1. 运行完整测试和源码编译检查。
-2. 在 tmux 启动 MewCode，分别观察模型等待、思考、工具执行和最终回复。
+2. 在 tmux 启动 YuCode，分别观察模型等待、思考、工具执行和最终回复。
 3. 在活动期间按 Ctrl+C，确认圆圈停止且输入恢复；记录实际结果。
 
 **验证：** `.venv\Scripts\python.exe -m pytest -q` 与 `.venv\Scripts\python.exe -m compileall -q src` 均退出码 0；tmux 中活动标记可见、完成后静止。

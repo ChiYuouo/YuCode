@@ -4,13 +4,13 @@ import json
 import httpx
 import pytest
 
-from mewcode.config import ProviderConfig
-from mewcode.prompting import ModelRequest, RuntimeMessage
-from mewcode.providers.anthropic import AnthropicProvider
-from mewcode.providers.base import (
+from yucode.config import ProviderConfig
+from yucode.prompting import ModelRequest, RuntimeMessage
+from yucode.providers.anthropic import AnthropicProvider
+from yucode.providers.base import (
     Cancellation, Message, ProviderError, StreamCancelled, ToolCallContent, ToolResultContent,
 )
-from mewcode.tools.base import ToolCall, ToolDefinition, ToolResult
+from yucode.tools.base import ToolCall, ToolDefinition, ToolResult
 
 
 def config(thinking_enabled: bool = False) -> ProviderConfig:

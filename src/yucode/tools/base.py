@@ -7,7 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from mewcode.cancellation import Cancellation
+from yucode.cancellation import Cancellation
 
 
 class ToolSafety(str, Enum):

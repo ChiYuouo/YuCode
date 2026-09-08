@@ -4,15 +4,15 @@ from pathlib import Path
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown
 
-from mewcode.agent import Agent, ToolCallStarted, ToolResultReady
-from mewcode.config import ProviderConfig
-from mewcode.conversation import Conversation
-from mewcode.permissions import ApprovalChoice, PermissionManager, PermissionMode
-from mewcode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
-from mewcode.tools.base import ToolCall, ToolResult
-from mewcode.tools.registry import ToolRegistry
-from mewcode.tui.app import ChatApp
-from mewcode.tui.widgets import (
+from yucode.agent import Agent, ToolCallStarted, ToolResultReady
+from yucode.config import ProviderConfig
+from yucode.conversation import Conversation
+from yucode.permissions import ApprovalChoice, PermissionManager, PermissionMode
+from yucode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
+from yucode.tools.base import ToolCall, ToolResult
+from yucode.tools.registry import ToolRegistry
+from yucode.tui.app import ChatApp
+from yucode.tui.widgets import (
     AssistantMessage, ChatStatus, Composer, ErrorMessage, GenerationIndicator,
     InlinePermissionCard, ModeMenu, PendingToolActivity, ThinkingBox, ToolActivity, WelcomePanel,
 )
@@ -47,7 +47,9 @@ def test_tui_layout_widget() -> None:
             assert app.query_one("#chat-view", VerticalScroll)
             assert app.query_one("#prompt", Composer)
             welcome = app.query_one(WelcomePanel)
-            assert "MewCode" in str(welcome.render())
+            rendered = str(welcome.render())
+            assert "██████╗" in rendered
+            assert "( o.o )" not in rendered
             assert "claude-test" in str(welcome.render())
             await pilot.pause()
 

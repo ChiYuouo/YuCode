@@ -1,4 +1,4 @@
-# MewCode 权限模式边界与内嵌确认 Checklist
+# YuCode 权限模式边界与内嵌确认 Checklist
 
 > 每一项均以可观察的运行行为、测试结果或终端交互验证。
 
@@ -46,7 +46,7 @@
 
 ## tmux 端到端场景
 
-- [x] 在 tmux 中启动 MewCode，切换到 `acceptEdits` 后请求向本章专用临时文件写入 `1`；观察文件调用直接完成，且不会被“未明确授权副作用操作”拒绝。（验证：读取临时文件确认内容；不触碰现有 `hello.txt`、`note.txt` 或其他用户文件。）
+- [x] 在 tmux 中启动 YuCode，切换到 `acceptEdits` 后请求向本章专用临时文件写入 `1`；观察文件调用直接完成，且不会被“未明确授权副作用操作”拒绝。（验证：读取临时文件确认内容；不触碰现有 `hello.txt`、`note.txt` 或其他用户文件。）
 - [x] 在 `default` 下请求有副作用操作；观察聊天流内出现四选项确认卡片，使用 `1` 允许后工具执行并更新同一卡片。（验证：观察终端画面与临时文件结果。）
 - [x] 在 `acceptEdits` 和 `bypassPermissions` 各自进入 Plan 后执行 `/do`；观察恢复到进入前的 Do 状态。随后在 Plan 请求写入，观察只读规划回复且临时文件不变化。（验证：观察状态栏、聊天回复和临时文件内容。）
 - [x] 端到端完成后，只清理本章创建且已核对路径的临时文件，并将每项实际结果记录回本清单。（验证：确认用户原有文件未改动，清单条目保留通过或失败状态与简要证据。）
@@ -60,6 +60,6 @@
 - [x] Plan 不向模型公开副作用工具；若模型仍臆造调用已注册的副作用工具，返回 `permission_plan`，不再返回来自另一套门禁的 `tool_not_available` 或 `policy_violation`。（验证：运行 Agent Plan 幻觉工具测试并检查结构化结果。）
 - [x] 流程失败、权限拒绝和人工确认在工具活动、确认卡片与模型历史中使用同一个主原因，不出现“权限允许但策略拒绝”等矛盾信息。（验证：运行 TUI 与 Agent 集成测试，对比同一 `ToolResult` 的界面摘要和模型正文。）
 - [x] 带 BOM 的 UTF-16 文本仍能成功读取，并在读取后按权限模式覆盖或编辑；真正含 NUL 的非文本文件仍被识别为二进制。（验证：运行 UTF-16 回归测试和二进制反例测试。）
-- [x] 旧的第二套权限入口已经消失。（验证：运行 `rg -n "ExecutionPolicy|policy_violation|mewcode\.policy" src tests`，期望无输出；运行编译检查，期望模块导入成功。）
+- [x] 旧的第二套权限入口已经消失。（验证：运行 `rg -n "ExecutionPolicy|policy_violation|yucode\.policy" src tests`，期望无输出；运行编译检查，期望模块导入成功。）
 - [x] 统一裁决后的完整测试无失败。（验证：运行 `.venv\Scripts\python.exe -m compileall -q src tests` 和 `.venv\Scripts\python.exe -m pytest -q -rA`。）
 - [x] 在 tmux 中走完整流程：AcceptEdits 覆盖已有临时文本时先收到单一 `workflow_precondition`，Agent 补读后完成；随后验证 Plan、危险命令和 deny 各自只显示一个稳定原因，Agent Loop 继续。（验证：观察真实 TUI 工具活动和最终文件内容，结束后只清理本章专用临时文件。）

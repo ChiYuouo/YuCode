@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from mewcode.agent import Agent
-from mewcode.cli import create_provider, main
-from mewcode.config import ProviderConfig
-from mewcode.providers.anthropic import AnthropicProvider
-from mewcode.providers.base import Provider
-from mewcode.providers.openai import OpenAIProvider
+from yucode.agent import Agent
+from yucode.cli import create_provider, main
+from yucode.config import ProviderConfig
+from yucode.providers.anthropic import AnthropicProvider
+from yucode.providers.base import Provider
+from yucode.providers.openai import OpenAIProvider
 
 
 def test_selects_provider_from_protocol() -> None:
@@ -22,7 +22,7 @@ def test_selects_provider_from_protocol() -> None:
 def test_main_builds_agent_with_configured_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, protocol: str, expected_type: type[Provider]
 ) -> None:
-    (tmp_path / "mewcode.yaml").write_text(
+    (tmp_path / "yucode.yaml").write_text(
         f"protocol: {protocol}\nmodel: test-model\nbase_url: https://example.test\napi_key: test-key\nagent:\n  max_iterations: 3\n",
         encoding="utf-8",
     )
@@ -36,7 +36,7 @@ def test_main_builds_agent_with_configured_limit(
             return None
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("mewcode.cli.ChatApp", FakeApp)
+    monkeypatch.setattr("yucode.cli.ChatApp", FakeApp)
     main()
 
     agent, config = captured[0]

@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, AsyncIterator, Literal, Protocol
 
-from mewcode.cancellation import Cancellation
-from mewcode.tools.base import ToolCall, ToolDefinition, ToolResult
+from yucode.cancellation import Cancellation
+from yucode.tools.base import ToolCall, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
-    from mewcode.prompting import ModelRequest
+    from yucode.prompting import ModelRequest
 
 
 @dataclass(frozen=True)

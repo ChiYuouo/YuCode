@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-from mewcode.providers.base import Message
-from mewcode.tools.base import ToolDefinition
+from yucode.providers.base import Message
+from yucode.tools.base import ToolDefinition
 
 
-PROMPT_VERSION = "mewcode-prompt-v1"
+PROMPT_VERSION = "yucode-prompt-v1"
 
 
 @dataclass(frozen=True)
@@ -100,7 +100,7 @@ class SystemPromptBuilder:
             else "任务模式：执行模式。根据用户目标观察、执行和验证，直到任务完成。"
         )
         fixed = (
-            PromptModule("identity", "身份：你是 MewCode，一个可靠的终端 AI 编程助手。", True),
+            PromptModule("identity", "身份：你是 YuCode，一个可靠的终端 AI 编程助手。", True),
             PromptModule(
                 "system_constraints",
                 "系统约束：必须遵守当前工作目录边界、工具安全限制和用户明确授权；不得猜测未读取的内容、伪造未执行的结果、隐藏失败或把计划表述为已完成；不得输出密钥、令牌、密码、Cookie 或其他敏感值。",
@@ -206,4 +206,4 @@ class SystemPromptBuilder:
             ],
         }
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        return f"mewcode-{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+        return f"yucode-{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"

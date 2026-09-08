@@ -1,4 +1,4 @@
-# MewCode Agent Loop Plan
+# YuCode Agent Loop Plan
 
 ## 架构概览
 
@@ -158,7 +158,7 @@ agent:
 ## 文件组织
 
 ```text
-src/mewcode/
+src/yucode/
 ├── agent.py                  # Agent Loop、事件、模式、停止原因与收集器
 ├── cancellation.py           # Provider 与工具共享的异步取消信号
 ├── config.py                 # AppConfig、AgentConfig 与配置校验
@@ -238,15 +238,15 @@ tests/
 
 ## 模块设计
 
-### `src/mewcode/tui/widgets.py`
+### `src/yucode/tui/widgets.py`
 
 用 `ActivityIndicator` 替换静态生成提示；让 `ThinkingBox` 接收时钟帧；新增 `PendingToolActivity`；让 `AssistantMessage` 暴露启动等待、接收思考帧、停止活动和推进帧的方法。
 
-### `src/mewcode/tui/app.py`
+### `src/yucode/tui/app.py`
 
 消费此前未使用的 `ToolCallStarted`；维护一个请求级动画时钟；在工具结果到达时原位替换对应进行中行；在完成、取消和错误路径统一停止时钟。保留文本滚动、Token、模式、确认与取消逻辑。
 
-### `src/mewcode/tui/app.tcss` 与 `tests/test_tui.py`
+### `src/yucode/tui/app.tcss` 与 `tests/test_tui.py`
 
 前者定义低对比度终端动效样式；后者覆盖帧推进、思考标题、工具进行中到完成替换，以及完成/取消后的停止行为。
 

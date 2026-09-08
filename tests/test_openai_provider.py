@@ -4,13 +4,13 @@ import json
 import httpx
 import pytest
 
-from mewcode.config import ProviderConfig
-from mewcode.prompting import ModelRequest, RuntimeMessage
-from mewcode.providers.base import (
+from yucode.config import ProviderConfig
+from yucode.prompting import ModelRequest, RuntimeMessage
+from yucode.providers.base import (
     Cancellation, Message, ProviderError, StreamCancelled, ToolCallContent, ToolResultContent,
 )
-from mewcode.providers.openai import OpenAIProvider
-from mewcode.tools.base import ToolCall, ToolDefinition, ToolResult
+from yucode.providers.openai import OpenAIProvider
+from yucode.tools.base import ToolCall, ToolDefinition, ToolResult
 
 
 def config() -> ProviderConfig:

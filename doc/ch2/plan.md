@@ -1,4 +1,4 @@
-# MewCode 工具系统 Plan
+# YuCode 工具系统 Plan
 
 ## 架构概览
 
@@ -67,7 +67,7 @@ TUI 输入
 ## 文件组织
 
 ```text
-src/mewcode/
+src/yucode/
 ├── tools/
 │   ├── base.py
 │   ├── filesystem.py

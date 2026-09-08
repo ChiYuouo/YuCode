@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from mewcode.config import ConfigError, load_config
-from mewcode.permissions import PermissionMode
+from yucode.config import ConfigError, load_config
+from yucode.permissions import PermissionMode
 
 
 def write_config(tmp_path: Path, content: str) -> Path:
-    path = tmp_path / "mewcode.yaml"
+    path = tmp_path / "yucode.yaml"
     path.write_text(content, encoding="utf-8")
     return path
 
@@ -53,6 +53,18 @@ def test_loads_each_permission_mode(tmp_path: Path, mode: str) -> None:
 def test_defaults_permission_mode_to_default(tmp_path: Path) -> None:
     path = write_config(tmp_path, "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\n")
     assert load_config(path).permissions.mode is PermissionMode.DEFAULT
+
+
+def test_default_path_only_reads_yucode_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    content = "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\n"
+    (tmp_path / ("m" + "ewcode.yaml")).write_text(content, encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="yucode.yaml"):
+        load_config()
+
+    write_config(tmp_path, content)
+    assert load_config().provider.model == "x"
 
 
 @pytest.mark.parametrize(

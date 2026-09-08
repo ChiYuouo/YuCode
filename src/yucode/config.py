@@ -1,4 +1,4 @@
-"""读取并校验 MewCode 的 YAML 配置。"""
+"""读取并校验 YuCode 的 YAML 配置。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from mewcode.permissions import PermissionMode
+from yucode.permissions import PermissionMode
 
 
 class ConfigError(ValueError):
@@ -43,7 +43,7 @@ class PermissionConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
-    """MewCode 的完整应用配置。"""
+    """YuCode 的完整应用配置。"""
 
     provider: ProviderConfig
     agent: AgentConfig = AgentConfig()
@@ -51,10 +51,10 @@ class AppConfig:
 
 
 def load_config(path: Path | None = None) -> AppConfig:
-    """从指定路径或当前目录的 ``mewcode.yaml`` 加载配置。"""
-    config_path = path or Path.cwd() / "mewcode.yaml"
+    """从指定路径或当前目录的 ``yucode.yaml`` 加载配置。"""
+    config_path = path or Path.cwd() / "yucode.yaml"
     if not config_path.is_file():
-        raise ConfigError(f"找不到配置文件：{config_path.name}。请在当前目录创建 mewcode.yaml。")
+        raise ConfigError(f"找不到配置文件：{config_path.name}。请在当前目录创建 yucode.yaml。")
 
     try:
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))

@@ -7,9 +7,9 @@ from collections.abc import Mapping
 from contextlib import suppress
 from typing import Any
 
-from mewcode.cancellation import Cancellation
-from mewcode.tools.base import ToolContext, ToolDefinition, ToolResult, ToolSafety
-from mewcode.tools.filesystem import MAX_RESULT_CHARS
+from yucode.cancellation import Cancellation
+from yucode.tools.base import ToolContext, ToolDefinition, ToolResult, ToolSafety
+from yucode.tools.filesystem import MAX_RESULT_CHARS
 
 COMMAND_TIMEOUT_SECONDS = 30
 

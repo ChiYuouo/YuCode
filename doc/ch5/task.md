@@ -1,32 +1,32 @@
-# MewCode 五层权限系统 Tasks
+# YuCode 五层权限系统 Tasks
 
 ## 文件清单
 
 | 操作 | 文件 | 职责 |
 |---|---|---|
-| 新建 | `src/mewcode/permissions.py` | 权限枚举、规则层、黑名单、模式判断、会话授权与本地规则存储 |
-| 修改 | `src/mewcode/tools/filesystem.py` | 共享、符号链接安全的项目路径解析与 glob 输入校验 |
-| 修改 | `src/mewcode/tools/executor.py` | 真实工具执行前统一接入权限判断与通用确认 |
-| 修改 | `src/mewcode/config.py` | 解析 `permissions.mode` |
-| 修改 | `src/mewcode/cli.py` | 创建并注入会话级权限管理器 |
-| 修改 | `src/mewcode/policy.py` | 保留流程门禁，去除“拒绝即终止”的状态 |
-| 修改 | `src/mewcode/agent.py` | 回灌权限拒绝并继续 Agent Loop |
-| 修改 | `src/mewcode/tui/widgets.py` | 通用四选项权限确认弹窗 |
-| 修改 | `src/mewcode/tui/app.py` | 把弹窗选择作为通用权限回调返回 |
+| 新建 | `src/yucode/permissions.py` | 权限枚举、规则层、黑名单、模式判断、会话授权与本地规则存储 |
+| 修改 | `src/yucode/tools/filesystem.py` | 共享、符号链接安全的项目路径解析与 glob 输入校验 |
+| 修改 | `src/yucode/tools/executor.py` | 真实工具执行前统一接入权限判断与通用确认 |
+| 修改 | `src/yucode/config.py` | 解析 `permissions.mode` |
+| 修改 | `src/yucode/cli.py` | 创建并注入会话级权限管理器 |
+| 修改 | `src/yucode/policy.py` | 保留流程门禁，去除“拒绝即终止”的状态 |
+| 修改 | `src/yucode/agent.py` | 回灌权限拒绝并继续 Agent Loop |
+| 修改 | `src/yucode/tui/widgets.py` | 通用四选项权限确认弹窗 |
+| 修改 | `src/yucode/tui/app.py` | 把弹窗选择作为通用权限回调返回 |
 | 修改 | `tests/test_config.py` | 权限模式配置的单元测试 |
 | 新建 | `tests/test_permissions.py` | 五层判断、规则解析、持久化与脱敏测试 |
 | 修改 | `tests/test_tools.py` | 路径解析和执行器拒绝时不执行的集成测试 |
 | 修改 | `tests/test_policy.py` | 既有流程门禁回归测试 |
 | 修改 | `tests/test_agent.py` | 权限拒绝回灌后继续循环的测试 |
 | 修改 | `tests/test_tui.py` | 四选项权限确认与取消测试 |
-| 修改 | `mewcode.yaml.example` | 权限模式使用示例 |
-| 新建 | `mewcode.permissions.yaml.example` | 项目共享规则格式示例 |
+| 修改 | `yucode.yaml.example` | 权限模式使用示例 |
+| 新建 | `yucode.permissions.yaml.example` | 项目共享规则格式示例 |
 | 修改 | `.gitignore` | 忽略项目本地规则文件 |
 | 新建 | `doc/ch5/checklist.md` | 规格验收与端到端验证清单 |
 
 ## T1: 统一专用文件工具的路径沙箱
 
-**文件：** `src/mewcode/tools/filesystem.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/filesystem.py`、`tests/test_tools.py`
 
 **依赖：** 无
 
@@ -40,7 +40,7 @@
 
 ## T2: 实现规则模型、YAML 加载和优先级匹配
 
-**文件：** `src/mewcode/permissions.py`、`tests/test_permissions.py`
+**文件：** `src/yucode/permissions.py`、`tests/test_permissions.py`
 
 **依赖：** T1
 
@@ -55,7 +55,7 @@
 
 ## T3: 实现硬边界与权限模式决策
 
-**文件：** `src/mewcode/permissions.py`、`tests/test_permissions.py`
+**文件：** `src/yucode/permissions.py`、`tests/test_permissions.py`
 
 **依赖：** T1、T2
 
@@ -69,7 +69,7 @@
 
 ## T4: 实现一次、会话和永久授权
 
-**文件：** `src/mewcode/permissions.py`、`tests/test_permissions.py`
+**文件：** `src/yucode/permissions.py`、`tests/test_permissions.py`
 
 **依赖：** T2、T3
 
@@ -83,7 +83,7 @@
 
 ## T5: 加入主配置和规则配置示例
 
-**文件：** `src/mewcode/config.py`、`tests/test_config.py`、`mewcode.yaml.example`、`mewcode.permissions.yaml.example`、`.gitignore`
+**文件：** `src/yucode/config.py`、`tests/test_config.py`、`yucode.yaml.example`、`yucode.permissions.yaml.example`、`.gitignore`
 
 **依赖：** T2
 
@@ -91,14 +91,14 @@
 1. 在应用配置中加入权限模式，缺省为 `default`，并明确拒绝非 `default/acceptEdits/plan/bypassPermissions` 值。
 2. 更新主配置示例，说明权限模式的四个可选值及其确认行为，以及配置只决定启动模式。
 3. 新建项目共享规则示例，展示规范工具名的精确和 glob 规则，不生成真实规则文件。
-4. 将 `mewcode.permissions.local.yaml` 加入 Git 忽略规则。
+4. 将 `yucode.permissions.local.yaml` 加入 Git 忽略规则。
 5. 测试默认、四种合法模式和非法模式的配置加载，并检查本地规则文件可被 Git 忽略。
 
-**验证：** 运行 `.venv\Scripts\python.exe -m pytest tests/test_config.py -q`，随后运行 `git check-ignore mewcode.permissions.local.yaml`；期望配置测试通过，第二个命令返回该本地规则文件的忽略匹配。
+**验证：** 运行 `.venv\Scripts\python.exe -m pytest tests/test_config.py -q`，随后运行 `git check-ignore yucode.permissions.local.yaml`；期望配置测试通过，第二个命令返回该本地规则文件的忽略匹配。
 
 ## T6: 将权限判断接入工具执行器
 
-**文件：** `src/mewcode/tools/executor.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/executor.py`、`tests/test_tools.py`
 
 **依赖：** T1、T2、T3、T4、T5
 
@@ -113,7 +113,7 @@
 
 ## T7: 让 Agent 在拒绝后继续并保留既有流程门禁
 
-**文件：** `src/mewcode/agent.py`、`src/mewcode/policy.py`、`src/mewcode/cli.py`、`tests/test_agent.py`、`tests/test_policy.py`
+**文件：** `src/yucode/agent.py`、`src/yucode/policy.py`、`src/yucode/cli.py`、`tests/test_agent.py`、`tests/test_policy.py`
 
 **依赖：** T5、T6
 
@@ -128,7 +128,7 @@
 
 ## T8: 实现四选项权限确认界面
 
-**文件：** `src/mewcode/tui/widgets.py`、`src/mewcode/tui/app.py`、`tests/test_tui.py`
+**文件：** `src/yucode/tui/widgets.py`、`src/yucode/tui/app.py`、`tests/test_tui.py`
 
 **依赖：** T4、T6、T7
 

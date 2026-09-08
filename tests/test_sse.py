@@ -1,6 +1,6 @@
 import asyncio
 
-from mewcode.providers.sse import decode_sse
+from yucode.providers.sse import decode_sse
 
 
 async def lines(*values: str):

@@ -14,9 +14,9 @@ from typing import Any
 
 import yaml
 
-from mewcode.tools.base import Tool, ToolCall, ToolResult, ToolSafety
-from mewcode.tools.filesystem import WorkspacePathError, resolve_workspace_path, validate_workspace_glob
-from mewcode.workflow import ToolWorkflow
+from yucode.tools.base import Tool, ToolCall, ToolResult, ToolSafety
+from yucode.tools.filesystem import WorkspacePathError, resolve_workspace_path, validate_workspace_glob
+from yucode.workflow import ToolWorkflow
 
 
 class PermissionMode(str, Enum):
@@ -165,9 +165,9 @@ class LocalRuleStore:
         local_path: Path | None = None,
     ) -> None:
         self.root = root.resolve()
-        self.user_path = user_path or Path.home() / ".mewcode" / "permissions.yaml"
-        self.project_path = project_path or self.root / "mewcode.permissions.yaml"
-        self.local_path = local_path or self.root / "mewcode.permissions.local.yaml"
+        self.user_path = user_path or Path.home() / ".yucode" / "permissions.yaml"
+        self.project_path = project_path or self.root / "yucode.permissions.yaml"
+        self.local_path = local_path or self.root / "yucode.permissions.local.yaml"
 
     def load_layers(self) -> tuple[RuleLayer, ...]:
         return (

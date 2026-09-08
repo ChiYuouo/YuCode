@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from mewcode.cancellation import Cancellation
-from mewcode.permissions import ApprovalChoice, PermissionManager, PermissionMode, TaskAuthorization
-from mewcode.tools.base import ToolCall, ToolContext, ToolDefinition, ToolResult, ToolSafety
-from mewcode.tools.command import RunCommandTool
-from mewcode.tools.executor import ToolExecutor
-from mewcode.tools.filesystem import EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool
-from mewcode.tools.registry import ToolRegistry
-from mewcode.workflow import ToolWorkflow
+from yucode.cancellation import Cancellation
+from yucode.permissions import ApprovalChoice, PermissionManager, PermissionMode, TaskAuthorization
+from yucode.tools.base import ToolCall, ToolContext, ToolDefinition, ToolResult, ToolSafety
+from yucode.tools.command import RunCommandTool
+from yucode.tools.executor import ToolExecutor
+from yucode.tools.filesystem import EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool
+from yucode.tools.registry import ToolRegistry
+from yucode.workflow import ToolWorkflow
 
 
 def context(tmp_path: Path) -> ToolContext:
@@ -173,7 +173,7 @@ def test_command_collects_output_and_nonzero_exit(tmp_path: Path) -> None:
 
 
 def test_command_timeout_is_structured(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("mewcode.tools.command.COMMAND_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("yucode.tools.command.COMMAND_TIMEOUT_SECONDS", 0.05)
     result = run_tool(RunCommandTool(), {"command": "Start-Sleep 2"}, tmp_path)
     assert result.error_code == "timeout"
 

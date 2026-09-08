@@ -1,41 +1,41 @@
-# MewCode 首个对话版本 Tasks
+# YuCode 首个对话版本 Tasks
 
 ## 文件清单
 
 | 操作 | 文件 | 职责 |
 |---|---|---|
-| 新建 | `pyproject.toml` | Python 包元数据、依赖和 `mewcode` 命令行入口。 |
-| 新建 | `mewcode.yaml.example` | 不含真实密钥的 Claude 与 OpenAI 配置示例。 |
-| 新建 | `src/mewcode/config.py` | YAML 读取、配置结构与校验。 |
-| 新建 | `src/mewcode/conversation.py` | 内存会话历史与单轮生命周期。 |
-| 新建 | `src/mewcode/cli.py` | 交互输入、流式终端渲染、退出与中断处理。 |
-| 新建 | `src/mewcode/providers/` | Provider 契约、SSE 解析器、OpenAI 与 Claude 实现。 |
+| 新建 | `pyproject.toml` | Python 包元数据、依赖和 `yucode` 命令行入口。 |
+| 新建 | `yucode.yaml.example` | 不含真实密钥的 Claude 与 OpenAI 配置示例。 |
+| 新建 | `src/yucode/config.py` | YAML 读取、配置结构与校验。 |
+| 新建 | `src/yucode/conversation.py` | 内存会话历史与单轮生命周期。 |
+| 新建 | `src/yucode/cli.py` | 交互输入、流式终端渲染、退出与中断处理。 |
+| 新建 | `src/yucode/providers/` | Provider 契约、SSE 解析器、OpenAI 与 Claude 实现。 |
 | 新建 | `tests/` | 配置、SSE、Provider、会话及 CLI 自动化测试。 |
 
 ## T1：初始化可安装的 Python 包
 
-**文件：** `pyproject.toml`、`src/mewcode/__init__.py`、`src/mewcode/__main__.py`、`src/mewcode/cli.py`
+**文件：** `pyproject.toml`、`src/yucode/__init__.py`、`src/yucode/__main__.py`、`src/yucode/cli.py`
 
 **依赖：** 无
 
 **步骤：**
 
 1. 声明 Python 3.12、运行依赖 `httpx`、`PyYAML`、`rich` 与开发依赖 `pytest`。
-2. 注册 `mewcode` 控制台入口，并预留调用 CLI 主函数的模块入口。
+2. 注册 `yucode` 控制台入口，并预留调用 CLI 主函数的模块入口。
 3. 创建最小可导入包与临时 CLI 主函数。
 
-**验证：** 运行 `uv sync`，再运行 `uv run python -c "import mewcode"`；预期均成功且无导入错误。
+**验证：** 运行 `uv sync`，再运行 `uv run python -c "import yucode"`；预期均成功且无导入错误。
 
 ## T2：实现配置加载与示例配置
 
-**文件：** `src/mewcode/config.py`、`mewcode.yaml.example`、`tests/test_config.py`
+**文件：** `src/yucode/config.py`、`yucode.yaml.example`、`tests/test_config.py`
 
 **依赖：** T1
 
 **步骤：**
 
 1. 定义当前后端配置与思考开关的数据结构。
-2. 从工作目录的 `mewcode.yaml` 加载 YAML，验证四个核心字段、协议取值、URL 和思考配置。
+2. 从工作目录的 `yucode.yaml` 加载 YAML，验证四个核心字段、协议取值、URL 和思考配置。
 3. 对错误配置生成不暴露 API Key 的中文错误信息。
 4. 提供 Claude 和 OpenAI 的无密钥示例，并为配置加载和错误分支编写测试。
 
@@ -43,7 +43,7 @@
 
 ## T3：定义统一 Provider 契约与 SSE 解码器
 
-**文件：** `src/mewcode/providers/base.py`、`src/mewcode/providers/sse.py`、`tests/test_sse.py`
+**文件：** `src/yucode/providers/base.py`、`src/yucode/providers/sse.py`、`tests/test_sse.py`
 
 **依赖：** T1
 
@@ -57,7 +57,7 @@
 
 ## T4：实现 OpenAI Responses 流式 Provider
 
-**文件：** `src/mewcode/providers/openai.py`、`tests/test_openai_provider.py`
+**文件：** `src/yucode/providers/openai.py`、`tests/test_openai_provider.py`
 
 **依赖：** T2、T3
 
@@ -72,7 +72,7 @@
 
 ## T5：实现 Claude 流式 Provider 与思考事件
 
-**文件：** `src/mewcode/providers/anthropic.py`、`tests/test_anthropic_provider.py`
+**文件：** `src/yucode/providers/anthropic.py`、`tests/test_anthropic_provider.py`
 
 **依赖：** T2、T3
 
@@ -87,7 +87,7 @@
 
 ## T6：实现内存会话与中断恢复
 
-**文件：** `src/mewcode/conversation.py`、`tests/test_conversation.py`
+**文件：** `src/yucode/conversation.py`、`tests/test_conversation.py`
 
 **依赖：** T3、T4、T5
 
@@ -102,7 +102,7 @@
 
 ## T7：完成 CLI 交互与流式渲染
 
-**文件：** `src/mewcode/cli.py`、`src/mewcode/__main__.py`、`tests/test_cli.py`
+**文件：** `src/yucode/cli.py`、`src/yucode/__main__.py`、`tests/test_cli.py`
 
 **依赖：** T2、T6
 
@@ -125,9 +125,9 @@
 
 1. 运行全部测试并修复发现的问题。
 2. 从临时目录复制示例配置，分别替换为 OpenAI 和 Claude 的测试配置，确认配置加载与 Provider 选择正确。
-3. 安装本地包后确认 `mewcode` 命令可被终端找到。
+3. 安装本地包后确认 `yucode` 命令可被终端找到。
 
-**验证：** 运行 `uv run pytest` 和 `uv run mewcode`；预期测试全部通过，后者在有效配置时进入输入提示。
+**验证：** 运行 `uv run pytest` 和 `uv run yucode`；预期测试全部通过，后者在有效配置时进入输入提示。
 
 ## T9：tmux 真实端到端验收
 
@@ -137,7 +137,7 @@
 
 **步骤：**
 
-1. 使用用户提供的有效 `mewcode.yaml`，在 tmux 中启动 `mewcode`。
+1. 使用用户提供的有效 `yucode.yaml`，在 tmux 中启动 `yucode`。
 2. 输入真实问题，再输入一条依赖上一轮回答的追问。
 3. 观察回复是否边接收边显示、第二轮是否使用上下文，并使用退出命令关闭会话。
 4. 对照 `checklist.md` 记录实际命令和观察结果。

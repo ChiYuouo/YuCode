@@ -1,4 +1,4 @@
-"""MewCode 的完整聊天 Textual 应用。"""
+"""YuCode 的完整聊天 Textual 应用。"""
 
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from textual.containers import VerticalScroll
 from textual.timer import Timer
 from textual.widgets import OptionList, TextArea
 
-from mewcode.agent import (
+from yucode.agent import (
     Agent, AgentFinished, ProgressPhase, ProgressUpdated, TextDelta,
     ThinkingDelta, ToolCallStarted, ToolResultReady, UsageUpdated,
 )
-from mewcode.cancellation import Cancellation
-from mewcode.config import ProviderConfig
-from mewcode.permissions import ApprovalChoice, PermissionMode, PermissionRequest
-from mewcode.providers.base import CacheUsage
-from mewcode.tui.widgets import (
+from yucode.cancellation import Cancellation
+from yucode.config import ProviderConfig
+from yucode.permissions import ApprovalChoice, PermissionMode, PermissionRequest
+from yucode.providers.base import CacheUsage
+from yucode.tui.widgets import (
     AssistantMessage,
     ChatStatus,
     Composer,

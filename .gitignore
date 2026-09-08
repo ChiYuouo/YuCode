@@ -4,5 +4,5 @@ __pycache__/
 .pytest_cache/
 dist/
 *.egg-info/
-mewcode.yaml
-mewcode.permissions.local.yaml
+yucode.yaml
+yucode.permissions.local.yaml

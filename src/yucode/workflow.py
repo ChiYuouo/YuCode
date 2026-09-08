@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from mewcode.tools.base import ToolCall, ToolResult
+from yucode.tools.base import ToolCall, ToolResult
 
 
 _SPECIAL_COMMAND_WORDS = (

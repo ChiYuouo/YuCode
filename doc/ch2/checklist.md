@@ -1,4 +1,4 @@
-# MewCode 工具系统 Checklist
+# YuCode 工具系统 Checklist
 
 > 每项均以可观察行为、测试输出或 tmux 中的实际交互验收。
 
@@ -23,11 +23,11 @@
 
 ## 构建与自动化测试
 
-- [x] 项目安装入口可加载。验证：tmux 中以 `.venv\\Scripts\\python.exe -m mewcode` 启动，成功进入 TUI。
+- [x] 项目安装入口可加载。验证：tmux 中以 `.venv\\Scripts\\python.exe -m yucode` 启动，成功进入 TUI。
 - [x] 全部自动化测试通过。验证：`.venv\\Scripts\\python -m pytest -q`，55 项通过，退出码 0。
 
 ## 端到端场景
 
 - [x] 文件读取闭环：tmux 中输入英文等价请求后，模型调用 `read_file` 读取 `README.md`，显示成功摘要并回复项目用途，输入恢复可用。
-- [ ] 搜索闭环：同配置的非 TUI 真实请求成功调用 `search_code` 并回复 `src/mewcode/providers/base.py:110`；但 WSL tmux 与 Windows Python 组合下该场景出现不稳定挂起，尚不能作为 tmux 通过证据。
+- [ ] 搜索闭环：同配置的非 TUI 真实请求成功调用 `search_code` 并回复 `src/yucode/providers/base.py:110`；但 WSL tmux 与 Windows Python 组合下该场景出现不稳定挂起，尚不能作为 tmux 通过证据。
 - [x] 命令拒绝闭环：tmux 中请求 `Get-Location`，出现确认弹窗；选择拒绝后显示拒绝摘要，模型说明未执行，输入恢复可用。

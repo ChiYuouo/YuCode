@@ -1,21 +1,21 @@
-# MewCode 工具系统 Tasks
+# YuCode 工具系统 Tasks
 
 ## 文件清单
 
 | 操作 | 文件 | 职责 |
 |---|---|---|
-| 新建 | `src/mewcode/tools/base.py` | 工具协议、定义、调用、结果与上下文 |
-| 新建 | `src/mewcode/tools/filesystem.py` | 五项文件与搜索工具 |
-| 新建 | `src/mewcode/tools/command.py` | PowerShell 命令工具 |
-| 新建 | `src/mewcode/tools/registry.py` | 工具注册与 Schema 导出 |
-| 新建 | `src/mewcode/tools/executor.py` | 分派、参数校验、异常与确认处理 |
-| 修改 | `src/mewcode/providers/base.py` | 富消息、工具调用流事件与 Provider 接口 |
-| 修改 | `src/mewcode/providers/openai.py` | OpenAI 工具请求、流解析与历史序列化 |
-| 修改 | `src/mewcode/providers/anthropic.py` | Claude 工具请求、流解析与历史序列化 |
-| 修改 | `src/mewcode/conversation.py` | 单工具会话状态机 |
-| 修改 | `src/mewcode/cli.py` | 创建工作目录范围内的工具注册中心 |
-| 修改 | `src/mewcode/tui/widgets.py` | 工具摘要行与命令确认弹窗 |
-| 修改 | `src/mewcode/tui/app.py` | 后台确认等待、工具事件与状态恢复 |
+| 新建 | `src/yucode/tools/base.py` | 工具协议、定义、调用、结果与上下文 |
+| 新建 | `src/yucode/tools/filesystem.py` | 五项文件与搜索工具 |
+| 新建 | `src/yucode/tools/command.py` | PowerShell 命令工具 |
+| 新建 | `src/yucode/tools/registry.py` | 工具注册与 Schema 导出 |
+| 新建 | `src/yucode/tools/executor.py` | 分派、参数校验、异常与确认处理 |
+| 修改 | `src/yucode/providers/base.py` | 富消息、工具调用流事件与 Provider 接口 |
+| 修改 | `src/yucode/providers/openai.py` | OpenAI 工具请求、流解析与历史序列化 |
+| 修改 | `src/yucode/providers/anthropic.py` | Claude 工具请求、流解析与历史序列化 |
+| 修改 | `src/yucode/conversation.py` | 单工具会话状态机 |
+| 修改 | `src/yucode/cli.py` | 创建工作目录范围内的工具注册中心 |
+| 修改 | `src/yucode/tui/widgets.py` | 工具摘要行与命令确认弹窗 |
+| 修改 | `src/yucode/tui/app.py` | 后台确认等待、工具事件与状态恢复 |
 | 新建/修改 | `tests/test_tools.py` | 工具与执行器测试 |
 | 修改 | `tests/test_openai_provider.py` | OpenAI 工具协议测试 |
 | 修改 | `tests/test_anthropic_provider.py` | Claude 工具协议测试 |
@@ -24,7 +24,7 @@
 
 ## T1: 定义工具领域模型
 
-**文件：** `src/mewcode/tools/base.py`、`src/mewcode/providers/base.py`
+**文件：** `src/yucode/tools/base.py`、`src/yucode/providers/base.py`
 
 **依赖：** 无
 
@@ -38,7 +38,7 @@
 
 ## T2: 实现受限文件工具
 
-**文件：** `src/mewcode/tools/filesystem.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/filesystem.py`、`tests/test_tools.py`
 
 **依赖：** T1
 
@@ -52,7 +52,7 @@
 
 ## T3: 实现命令工具
 
-**文件：** `src/mewcode/tools/command.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/command.py`、`tests/test_tools.py`
 
 **依赖：** T1
 
@@ -66,7 +66,7 @@
 
 ## T4: 完成注册与执行器
 
-**文件：** `src/mewcode/tools/registry.py`、`src/mewcode/tools/executor.py`、`tests/test_tools.py`
+**文件：** `src/yucode/tools/registry.py`、`src/yucode/tools/executor.py`、`tests/test_tools.py`
 
 **依赖：** T2、T3
 
@@ -80,7 +80,7 @@
 
 ## T5: 适配 OpenAI 工具调用
 
-**文件：** `src/mewcode/providers/openai.py`、`tests/test_openai_provider.py`
+**文件：** `src/yucode/providers/openai.py`、`tests/test_openai_provider.py`
 
 **依赖：** T1、T4
 
@@ -94,7 +94,7 @@
 
 ## T6: 适配 Claude 工具调用
 
-**文件：** `src/mewcode/providers/anthropic.py`、`tests/test_anthropic_provider.py`
+**文件：** `src/yucode/providers/anthropic.py`、`tests/test_anthropic_provider.py`
 
 **依赖：** T1、T4
 
@@ -108,7 +108,7 @@
 
 ## T7: 实现单工具会话状态机
 
-**文件：** `src/mewcode/conversation.py`、`tests/test_conversation.py`
+**文件：** `src/yucode/conversation.py`、`tests/test_conversation.py`
 
 **依赖：** T4、T5、T6
 
@@ -123,7 +123,7 @@
 
 ## T8: 接入命令确认与工具摘要界面
 
-**文件：** `src/mewcode/tui/widgets.py`、`src/mewcode/tui/app.py`、`src/mewcode/cli.py`、`tests/test_tui.py`
+**文件：** `src/yucode/tui/widgets.py`、`src/yucode/tui/app.py`、`src/yucode/cli.py`、`tests/test_tui.py`
 
 **依赖：** T7
 
@@ -144,7 +144,7 @@
 
 **步骤：**
 1. 运行全部单元测试，修复任何回归。
-2. 在 tmux 启动 MewCode，使用真实配置发送“读取 README.md 的第一行并说明项目用途”。
+2. 在 tmux 启动 YuCode，使用真实配置发送“读取 README.md 的第一行并说明项目用途”。
 3. 观察工具摘要、模型的最终回复及输入恢复；另发送命令请求，验证确认弹窗和拒绝路径。
 4. 按 checklist 记录每项实际结果。
 

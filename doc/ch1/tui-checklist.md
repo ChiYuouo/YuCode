@@ -1,10 +1,10 @@
-# MewCode Claude Code 风格 TUI Checklist
+# YuCode Claude Code 风格 TUI Checklist
 
-> 本次改造于 2026-09-06 验收；真实密钥仅保留在未提交的 `mewcode.yaml`。
+> 本次改造于 2026-09-06 验收；真实密钥仅保留在未提交的 `yucode.yaml`。
 
 ## 自动化验收
 
-- [x] 欢迎页：`uv run pytest tests/test_tui.py -k layout` 验证小猫、MewCode、模型，并确认不显示固定示例提示。
+- [x] 欢迎页：`uv run pytest tests/test_tui.py -k layout` 验证小猫、YuCode、模型，并确认不显示固定示例提示。
 - [x] 首轮切换：验证 `Enter` 后移除欢迎页，显示用户 `›` 提示符、助手 Markdown 与状态更新。
 - [x] 多行输入：验证 `Shift+Enter` 插入换行、`Enter` 提交。
 - [x] 思考区：验证 thinking 默认折叠且可展开。

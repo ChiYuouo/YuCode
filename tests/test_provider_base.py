@@ -1,6 +1,6 @@
 import asyncio
 
-from mewcode.providers.base import Cancellation, StreamEvent, Usage
+from yucode.providers.base import Cancellation, StreamEvent, Usage
 
 
 def test_usage_event_carries_token_totals() -> None:

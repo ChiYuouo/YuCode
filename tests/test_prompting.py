@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from mewcode.prompting import RuntimeContext, SystemPromptBuilder
-from mewcode.providers.base import Message
-from mewcode.tools.base import ToolDefinition
+from yucode.prompting import RuntimeContext, SystemPromptBuilder
+from yucode.providers.base import Message
+from yucode.tools.base import ToolDefinition
 
 
 def tools() -> tuple[ToolDefinition, ...]:

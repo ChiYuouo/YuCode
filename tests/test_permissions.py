@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mewcode.permissions import (
+from yucode.permissions import (
     ApprovalChoice,
     LocalRuleStore,
     PermissionManager,
@@ -16,8 +16,8 @@ from mewcode.permissions import (
     TaskAuthorization,
     classify_authorization,
 )
-from mewcode.tools.base import ToolCall, ToolDefinition, ToolResult, ToolSafety
-from mewcode.workflow import ToolWorkflow
+from yucode.tools.base import ToolCall, ToolDefinition, ToolResult, ToolSafety
+from yucode.workflow import ToolWorkflow
 
 
 class FakeTool:
@@ -172,7 +172,7 @@ def test_invalid_rule_file_denies_but_higher_session_rule_can_override(tmp_path:
 
 
 def test_approval_scopes_persist_only_local_exact_rule_and_redact_summary(tmp_path: Path) -> None:
-    local = tmp_path / "mewcode.permissions.local.yaml"
+    local = tmp_path / "yucode.permissions.local.yaml"
     permissions = manager(tmp_path, local=local)
     target = call("write_file", "a.txt")
 

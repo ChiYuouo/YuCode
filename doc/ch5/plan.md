@@ -1,4 +1,4 @@
-# MewCode 五层权限系统 Plan
+# YuCode 五层权限系统 Plan
 
 ## 架构概览
 
@@ -119,7 +119,7 @@ class LocalRuleStore:
 
 ## 模块设计
 
-### `src/mewcode/permissions.py`
+### `src/yucode/permissions.py`
 
 **职责：** 定义权限枚举、规则解析与匹配、硬性命令黑名单、路径沙箱判定、模式回退、会话规则和本地持久化。
 
@@ -131,11 +131,11 @@ class LocalRuleStore:
 
 **路径策略：** 提取专用文件工具的路径参数，使用共享路径解析函数将其解析为规范化项目相对路径。解析函数先取得真实项目根目录，再对候选路径执行非严格解析，借此解析已存在的符号链接和其父级；候选路径不能相对真实根目录表示时返回 `path_outside_workspace`。`find_files` 的 glob 在枚举前拒绝绝对路径和含 `..` 的路径段；`search_code` 的可选起始路径走同一解析。文件工具实际执行前也复用这一解析函数，避免“权限检查通过、执行时以另一套路径规则访问”的双重实现。命令工具不进入该路径策略，始终由 `RunCommandTool` 的工作目录启动。
 
-**规则策略：** 规则来源固定为 `~/.mewcode/permissions.yaml`、`mewcode.permissions.yaml`、`mewcode.permissions.local.yaml`。不存在的规则文件等价于空层；已存在但无法读取、不是 YAML 映射、`rules` 不是列表、规则结构不完整、动作不是 allow/deny 或规则语法不合法时，将该层标记为读取错误并形成该层的拒绝决定。这样不会因坏配置默许执行，同时更高优先级的正常匹配仍可生效。本地写入使用临时文件和替换操作，保留已有合法规则，且只追加精确 allow。
+**规则策略：** 规则来源固定为 `~/.yucode/permissions.yaml`、`yucode.permissions.yaml`、`yucode.permissions.local.yaml`。不存在的规则文件等价于空层；已存在但无法读取、不是 YAML 映射、`rules` 不是列表、规则结构不完整、动作不是 allow/deny 或规则语法不合法时，将该层标记为读取错误并形成该层的拒绝决定。这样不会因坏配置默许执行，同时更高优先级的正常匹配仍可生效。本地写入使用临时文件和替换操作，保留已有合法规则，且只追加精确 allow。
 
 **模式策略：** 对所有通过硬边界且未命中规则的只读调用返回允许。`default` 对未命中副作用返回 `ASK`；`acceptEdits` 自动允许 `write_file` 和 `edit_file`，对命令返回 `ASK`；`plan` 拒绝所有副作用；`bypassPermissions` 允许所有未命中副作用。明确 `deny` 总是先于模式生效；黑名单与路径沙箱更早生效。`set_mode` 只更新当前会话的内存状态，供下一次 Agent 工具选择和权限判断共同读取。
 
-### `src/mewcode/tools/filesystem.py`
+### `src/yucode/tools/filesystem.py`
 
 **职责变化：** 将当前私有的工作区路径判断提升为可复用解析函数，并让读取、写入、编辑、查找和搜索的路径型参数统一复用该函数。
 
@@ -143,7 +143,7 @@ class LocalRuleStore:
 
 **边界：** 不在文件工具中解析权限模式、YAML 或人工确认；文件工具仍负责 UTF-8、大小、原子写入和各自的业务错误。
 
-### `src/mewcode/config.py` 与 `mewcode.yaml.example`
+### `src/yucode/config.py` 与 `yucode.yaml.example`
 
 **职责变化：** 新增 `PermissionConfig(mode: PermissionMode)` 并从主配置的 `permissions.mode` 读取 `default`、`acceptEdits`、`plan` 或 `bypassPermissions`，缺省值为 `default`。不合法值在启动时作为配置错误明确报告。
 
@@ -151,7 +151,7 @@ class LocalRuleStore:
 
 **配置边界：** 主配置只决定整体模式；三层规则仍由固定 YAML 路径加载，避免把本地规则路径或规则内容混入可提交的主连接配置。示例配置补充三种模式说明和项目共享规则示例的入口说明。
 
-### `src/mewcode/tools/executor.py`
+### `src/yucode/tools/executor.py`
 
 **职责变化：** 在现有未知工具、模式可用工具和参数对象检查之后、真实工具执行之前调用 `ExecutionPolicy` 与 `PermissionManager`。通过 `PermissionManager` 的 `ASK` 决定创建 `PermissionRequest` 并等待回调结果；得到允许才调用真实工具。
 
@@ -159,7 +159,7 @@ class LocalRuleStore:
 
 **执行顺序：** 对已注册、当前模式可用且参数是对象的调用：先保留既有任务授权/先读门禁，再进行危险命令检查、专用文件路径沙箱、规则层匹配、权限模式、必要的确认，再执行工具。Plan 模式先通过既有只读工具过滤阻止副作用暴露，再以权限决定为第二层保护。任一拒绝都不调用真实工具，并以 `dangerous_command`、`path_outside_workspace`、`rule_denied`、`permission_plan`、`permission_rejected` 或 `permission_config_error` 等错误码返回。批次顺序、只读并发和取消语义保持不变；有副作用的待确认调用仍是顺序屏障。
 
-### `src/mewcode/policy.py` 与 `src/mewcode/agent.py`
+### `src/yucode/policy.py` 与 `src/yucode/agent.py`
 
 **职责变化：** `ExecutionPolicy` 继续维护任务授权、读取证据和验证目标，但不再以 `blocking_failure` 让 Agent 在一次拒绝后提前停止。Agent 为一次会话持有同一个 `PermissionManager`，保证本会话允许和当前权限模式在后续 Agent 运行中有效；每次运行仍创建独立的 `ExecutionPolicy`，避免读取/验证证据跨用户任务泄漏。
 
@@ -167,7 +167,7 @@ class LocalRuleStore:
 
 **边界：** Agent 不直接读取 YAML、不执行权限规则，也不自行弹窗；它仅把执行器的结果按现有协议回灌并继续循环。现有敏感信息脱敏继续覆盖模型文本、工具结果和新增确认摘要。
 
-### `src/mewcode/tui/widgets.py` 与 `src/mewcode/tui/app.py`
+### `src/yucode/tui/widgets.py` 与 `src/yucode/tui/app.py`
 
 **职责变化：** 用 `PermissionConfirmation` 替换 `CommandConfirmation`。弹窗展示脱敏的工具摘要、影响说明和四个动作按钮：仅本次允许、本会话允许、永久允许、拒绝。App 将选择转换为 `ApprovalChoice`，并在取消生成时解除等待、自动按拒绝处理。App 增加 `Shift+Tab` 快捷键：在空闲时按 `default → acceptEdits → plan → bypassPermissions → default` 循环，调用权限管理器的 `set_mode`，同步状态栏，并让下一次请求使用该模式对应的 Agent 工具集合；生成期间不允许切换。
 
@@ -177,7 +177,7 @@ class LocalRuleStore:
 
 ### `.gitignore`、规则示例与测试
 
-**职责变化：** 将 `mewcode.permissions.local.yaml` 加入忽略列表。新增受版本控制的 `mewcode.permissions.yaml.example`，说明项目共享规则的 YAML 格式、规范工具名与精确/glob 例子；不生成真实用户全局或本地规则文件。
+**职责变化：** 将 `yucode.permissions.local.yaml` 加入忽略列表。新增受版本控制的 `yucode.permissions.yaml.example`，说明项目共享规则的 YAML 格式、规范工具名与精确/glob 例子；不生成真实用户全局或本地规则文件。
 
 **测试职责：** 新增权限单元测试覆盖五层判断、匹配与坏配置；扩展文件工具、执行器、Agent、配置和 TUI 测试覆盖复用路径解析、回调选择、拒绝回灌、循环继续、模式切换、持久化以及弹窗交互。
 
@@ -215,7 +215,7 @@ class LocalRuleStore:
 ## 文件组织
 
 ```text
-src/mewcode/
+src/yucode/
 ├── permissions.py                 # 五层判断、规则加载/匹配、会话与本地规则存储
 ├── config.py                      # PermissionConfig 与四档启动模式解析
 ├── policy.py                      # 保留任务授权、先读和验证追踪，去除拒绝即终止
@@ -235,9 +235,9 @@ tests/
 ├── test_agent.py                  # 拒绝回灌后模型调整、四档工具暴露与继续
 └── test_tui.py                    # 四种确认选择、Shift+Tab 与取消行为
 
-mewcode.permissions.yaml.example   # 可提交项目规则示例
+yucode.permissions.yaml.example   # 可提交项目规则示例
 .gitignore                          # 忽略本地规则文件
-mewcode.yaml.example                # 权限模式示例
+yucode.yaml.example                # 权限模式示例
 doc/ch5/
 ├── spec.md
 └── plan.md

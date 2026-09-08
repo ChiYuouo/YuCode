@@ -1,4 +1,4 @@
-# 可提交的项目共享权限规则。规则工具名使用 MewCode 的规范工具名。
+# 可提交的项目共享权限规则。规则工具名使用 YuCode 的规范工具名。
 rules:
   - rule: "run_command(git *)"
     action: allow

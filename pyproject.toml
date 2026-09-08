@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mewcode"
+name = "yucode"
 version = "0.1.0"
 description = "一个支持多模型流式对话的终端 AI 助手"
 readme = "README.md"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mewcode = "mewcode.cli:main"
+yucode = "yucode.cli:main"
 
 [dependency-groups]
 dev = [
@@ -28,4 +28,4 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mewcode"]
+packages = ["src/yucode"]

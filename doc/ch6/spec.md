@@ -1,4 +1,4 @@
-# MewCode 权限模式边界与内嵌确认 Spec
+# YuCode 权限模式边界与内嵌确认 Spec
 
 ## 背景
 

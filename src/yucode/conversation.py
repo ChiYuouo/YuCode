@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from mewcode.providers.base import Message, TextContent, ToolCallContent, ToolResultContent
-from mewcode.tools.base import ToolCall, ToolResult
+from yucode.providers.base import Message, TextContent, ToolCallContent, ToolResultContent
+from yucode.tools.base import ToolCall, ToolResult
 
 
 class Conversation:

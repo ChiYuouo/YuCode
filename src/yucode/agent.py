@@ -1,4 +1,4 @@
-"""MewCode 的异步 Agent Loop。"""
+"""YuCode 的异步 Agent Loop。"""
 
 from __future__ import annotations
 
@@ -6,21 +6,21 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
 
-from mewcode.cancellation import Cancellation
-from mewcode.conversation import Conversation
-from mewcode.permissions import (
+from yucode.cancellation import Cancellation
+from yucode.conversation import Conversation
+from yucode.permissions import (
     ApprovalCallback,
     PermissionManager,
     PermissionMode,
     SensitiveDataRedactor,
     classify_authorization,
 )
-from mewcode.prompting import RuntimeContext, SystemPromptBuilder
-from mewcode.providers.base import Provider, ProviderError, StreamCancelled, Usage
-from mewcode.tools.base import ToolCall, ToolResult
-from mewcode.tools.executor import ToolExecutor
-from mewcode.tools.registry import ToolRegistry
-from mewcode.workflow import ToolWorkflow
+from yucode.prompting import RuntimeContext, SystemPromptBuilder
+from yucode.providers.base import Provider, ProviderError, StreamCancelled, Usage
+from yucode.tools.base import ToolCall, ToolResult
+from yucode.tools.executor import ToolExecutor
+from yucode.tools.registry import ToolRegistry
+from yucode.workflow import ToolWorkflow
 
 
 class StopReason(str, Enum):

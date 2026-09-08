@@ -12,9 +12,9 @@ from textual.message import Message
 from textual.widgets import Collapsible, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
-from mewcode.permissions import ApprovalChoice, PermissionRequest
-from mewcode.tools.base import ToolCall, ToolResult
-from mewcode.providers.base import CacheUsage
+from yucode.permissions import ApprovalChoice, PermissionRequest
+from yucode.tools.base import ToolCall, ToolResult
+from yucode.providers.base import CacheUsage
 
 
 SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
@@ -62,14 +62,20 @@ class Composer(TextArea):
 class WelcomePanel(Static):
     """空会话时展示的品牌、环境和使用提示。"""
 
-    _CAT = " /\\_/\\\\\n( o.o )\n > ^ <"
+    _WORDMARK = (
+        "██╗   ██╗ ██╗   ██╗  ██████╗  ██████╗  ██████╗  ███████╗\n"
+        "╚██╗ ██╔╝ ██║   ██║ ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝\n"
+        " ╚████╔╝  ██║   ██║ ██║      ██║   ██║ ██║  ██║ █████╗\n"
+        "  ╚██╔╝   ██║   ██║ ██║      ██║   ██║ ██║  ██║ ██╔══╝\n"
+        "   ██║    ╚██████╔╝ ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗\n"
+        "   ╚═╝     ╚═════╝   ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝"
+    )
 
     def __init__(self, provider: str, model: str) -> None:
         content = Text(justify="center")
-        content.append(self._CAT, style="bold #63d8ef")
-        content.append("\n\nMewCode", style="bold #f4f7f7")
-        content.append("\n你的终端 AI 助手", style="#9ba6aa")
-        content.append(f"\n\n目录  {Path.cwd()}", style="#b8c4c7")
+        content.append(self._WORDMARK, style="bold #f4a261")
+        content.append("\n◆ ─────────── ◇ ─────────── ◆", style="#63d8ef")
+        content.append(f"\n目录  {Path.cwd()}", style="#b8c4c7")
         content.append(f"\n模型  {provider} / {model}", style="#b8c4c7")
         super().__init__(content, id="welcome-panel")
 

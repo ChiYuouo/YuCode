@@ -4,16 +4,16 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from mewcode.agent import (
+from yucode.agent import (
     Agent, AgentFinished, ProgressUpdated, StopReason, TextDelta,
     ToolResultReady, UsageUpdated,
 )
-from mewcode.cancellation import Cancellation
-from mewcode.conversation import Conversation
-from mewcode.permissions import ApprovalChoice, PermissionMode
-from mewcode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
-from mewcode.tools.base import ToolCall
-from mewcode.tools.registry import ToolRegistry
+from yucode.cancellation import Cancellation
+from yucode.conversation import Conversation
+from yucode.permissions import ApprovalChoice, PermissionMode
+from yucode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
+from yucode.tools.base import ToolCall
+from yucode.tools.registry import ToolRegistry
 
 
 class FakeProvider:

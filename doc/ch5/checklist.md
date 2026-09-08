@@ -1,4 +1,4 @@
-# MewCode 五层权限系统 Checklist
+# YuCode 五层权限系统 Checklist
 
 > 每项均通过测试、终端观察或 tmux 中的真实对话验证。完成后记录实际命令、观察结果和通过/失败状态；真实模型服务不可用时，明确标为未执行，不得将模拟结果记为端到端通过。
 
@@ -20,7 +20,7 @@
 
 - [x] AC6 / 本次、会话、永久和拒绝：在需要确认的模式下，对同一未覆盖副作用调用依次选择四个选项，再测试同范围和不同范围的后续调用。验证：运行 `.venv\Scripts\python.exe -m pytest tests/test_permissions.py tests/test_tools.py -q -k "approval or once or session or permanent or rejected"`；期望本次允许不复用，会话规则仅命中同一工具和规范化目标，永久允许原子写入项目本地规则，拒绝不执行工具。
 
-- [x] N3 / 规则作用域与 Git 忽略：检查用户、项目、本地和会话规则不会互相写入；选择永久允许后检查生成文件。验证：运行 `git check-ignore mewcode.permissions.local.yaml`，并运行 `.venv\Scripts\python.exe -m pytest tests/test_permissions.py -q -k "local or persistent or scope"`；期望项目本地规则被 Git 忽略且不写入用户或项目共享规则，项目共享示例仍可提交。
+- [x] N3 / 规则作用域与 Git 忽略：检查用户、项目、本地和会话规则不会互相写入；选择永久允许后检查生成文件。验证：运行 `git check-ignore yucode.permissions.local.yaml`，并运行 `.venv\Scripts\python.exe -m pytest tests/test_permissions.py -q -k "local or persistent or scope"`；期望项目本地规则被 Git 忽略且不写入用户或项目共享规则，项目共享示例仍可提交。
 
 - [x] F7、N5 / 确认范围与脱敏：用包含模拟 token、密码或 Cookie 的命令和写入参数触发确认，并尝试把确认用于黑名单或项目外路径。验证：运行 `.venv\Scripts\python.exe -m pytest tests/test_permissions.py tests/test_tui.py -q -k "redact or summary or approval or dangerous or outside"`；期望弹窗和模型回灌不包含模拟敏感值，任何确认均不能改变黑名单、沙箱或其他调用的决定。
 
@@ -44,9 +44,9 @@
 
 > 以下操作仅在有效模型配置存在时执行。高危命令场景只验证系统的拒绝结果，不在系统外实际运行破坏性命令。
 
-- [ ] 场景 1 / 默认模式确认与恢复：在 tmux 启动 MewCode，输入“在项目内创建 permission-e2e.txt，内容为 `ok`，然后读取确认”。当默认模式弹出确认时选择“仅本次允许”。验证：观察工具活动、确认弹窗、文件内容和最终回复；期望写入仅执行一次，随后读取验证，最终回复基于工具结果说明完成。
+- [ ] 场景 1 / 默认模式确认与恢复：在 tmux 启动 YuCode，输入“在项目内创建 permission-e2e.txt，内容为 `ok`，然后读取确认”。当默认模式弹出确认时选择“仅本次允许”。验证：观察工具活动、确认弹窗、文件内容和最终回复；期望写入仅执行一次，随后读取验证，最终回复基于工具结果说明完成。
 
-- [ ] 场景 2 / 会话与永久规则：在同一会话中再次对同一文件编辑，选择“本会话允许”；随后对另一个文件编辑，确认仍会出现。再对一个明确目标选择“永久允许”。验证：观察会话行为和 `mewcode.permissions.local.yaml`，并运行 `git check-ignore mewcode.permissions.local.yaml`；期望会话规则不扩大到其他目标，永久规则是精确 allow 且文件被忽略。
+- [ ] 场景 2 / 会话与永久规则：在同一会话中再次对同一文件编辑，选择“本会话允许”；随后对另一个文件编辑，确认仍会出现。再对一个明确目标选择“永久允许”。验证：观察会话行为和 `yucode.permissions.local.yaml`，并运行 `git check-ignore yucode.permissions.local.yaml`；期望会话规则不扩大到其他目标，永久规则是精确 allow 且文件被忽略。
 
 - [ ] 场景 3 / 四档切换：在输入框空闲时连续使用 Shift+Tab，分别停在 acceptEdits、plan、bypassPermissions。验证：在 acceptEdits 请求创建项目内临时文件、请求运行无害命令；在 plan 请求分析 README 并要求写文件；在 bypassPermissions 请求创建临时文件。期望状态栏和行为分别为编辑免确认/命令确认、只读拒绝写入、未命中写入免确认；结束后删除测试临时文件。
 
@@ -56,9 +56,9 @@
 
 ## tmux 执行步骤
 
-1. 启动：运行 `wsl.exe tmux new-session -d -s mewcode-ch5 "cd /mnt/c/develop/Mewcode && .venv/Scripts/python.exe -m mewcode"`，随后运行 `wsl.exe tmux capture-pane -p -t mewcode-ch5`；期望看到 MewCode 欢迎界面。
-2. 用 `wsl.exe tmux send-keys -t mewcode-ch5 "<场景输入>" Enter` 输入场景 1、2、4、5；每一步用 `wsl.exe tmux capture-pane -p -t mewcode-ch5` 保存观察。
-3. 在场景 3 使用 `wsl.exe tmux send-keys -t mewcode-ch5 BTab` 发送 Shift+Tab；每次捕获状态区域，确认四档名称与预期顺序一致。需要点击确认按钮时，在 tmux 中使用对应键盘焦点操作，并记录选择。
+1. 启动：运行 `wsl.exe tmux new-session -d -s yucode-ch5 "cd <项目根目录> && .venv/Scripts/python.exe -m yucode"`，随后运行 `wsl.exe tmux capture-pane -p -t yucode-ch5`；期望看到 YuCode 欢迎界面。
+2. 用 `wsl.exe tmux send-keys -t yucode-ch5 "<场景输入>" Enter` 输入场景 1、2、4、5；每一步用 `wsl.exe tmux capture-pane -p -t yucode-ch5` 保存观察。
+3. 在场景 3 使用 `wsl.exe tmux send-keys -t yucode-ch5 BTab` 发送 Shift+Tab；每次捕获状态区域，确认四档名称与预期顺序一致。需要点击确认按钮时，在 tmux 中使用对应键盘焦点操作，并记录选择。
 4. 每个会修改文件的场景前后运行 `git status --short`，并在完成后仅删除本清单创建的明确临时文件；记录清理结果。
 5. 若配置缺失、认证失败或网络不可达，保存终端输出并记录为端到端阻碍；离线自动化仍可单独判定，但不得替代真实端到端通过。
 

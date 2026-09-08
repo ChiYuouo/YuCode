@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from mewcode.tools.base import Tool, ToolContext, ToolDefinition, ToolSafety
-from mewcode.tools.command import RunCommandTool
-from mewcode.tools.filesystem import EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool
+from yucode.tools.base import Tool, ToolContext, ToolDefinition, ToolSafety
+from yucode.tools.command import RunCommandTool
+from yucode.tools.filesystem import EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool
 
 
 class ToolRegistry:

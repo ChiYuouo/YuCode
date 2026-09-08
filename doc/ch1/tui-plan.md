@@ -1,4 +1,4 @@
-# MewCode Claude Code 风格 TUI Plan
+# YuCode Claude Code 风格 TUI Plan
 
 ## 架构
 

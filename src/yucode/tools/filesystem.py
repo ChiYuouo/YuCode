@@ -10,8 +10,8 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from mewcode.cancellation import Cancellation
-from mewcode.tools.base import ToolContext, ToolDefinition, ToolResult, ToolSafety
+from yucode.cancellation import Cancellation
+from yucode.tools.base import ToolContext, ToolDefinition, ToolResult, ToolSafety
 
 MAX_READ_BYTES = 1_048_576
 MAX_RESULT_CHARS = 12_000

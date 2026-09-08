@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 
-from mewcode.cancellation import Cancellation
-from mewcode.permissions import ApprovalCallback as PermissionApprovalCallback
-from mewcode.permissions import PermissionManager, PermissionOutcome, TaskAuthorization
-from mewcode.tools.base import ToolCall, ToolResult, ToolSafety
-from mewcode.tools.registry import ToolRegistry
-from mewcode.workflow import ToolWorkflow
+from yucode.cancellation import Cancellation
+from yucode.permissions import ApprovalCallback as PermissionApprovalCallback
+from yucode.permissions import PermissionManager, PermissionOutcome, TaskAuthorization
+from yucode.tools.base import ToolCall, ToolResult, ToolSafety
+from yucode.tools.registry import ToolRegistry
+from yucode.workflow import ToolWorkflow
 
 class ToolExecutor:
     def __init__(self, registry: ToolRegistry, permissions: PermissionManager | None = None) -> None:

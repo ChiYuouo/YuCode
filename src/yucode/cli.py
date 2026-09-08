@@ -1,4 +1,4 @@
-"""MewCode 的终端交互入口。"""
+"""YuCode 的终端交互入口。"""
 
 from __future__ import annotations
 
@@ -6,15 +6,15 @@ from pathlib import Path
 
 from rich.console import Console
 
-from mewcode.agent import Agent
-from mewcode.config import ConfigError, ProviderConfig, load_config
-from mewcode.conversation import Conversation
-from mewcode.permissions import PermissionManager
-from mewcode.providers.anthropic import AnthropicProvider
-from mewcode.providers.base import Provider
-from mewcode.providers.openai import OpenAIProvider
-from mewcode.tools.registry import ToolRegistry
-from mewcode.tui.app import ChatApp
+from yucode.agent import Agent
+from yucode.config import ConfigError, ProviderConfig, load_config
+from yucode.conversation import Conversation
+from yucode.permissions import PermissionManager
+from yucode.providers.anthropic import AnthropicProvider
+from yucode.providers.base import Provider
+from yucode.providers.openai import OpenAIProvider
+from yucode.tools.registry import ToolRegistry
+from yucode.tui.app import ChatApp
 
 
 def main() -> None:

@@ -1,8 +1,8 @@
-# MewCode Claude Code 风格 TUI Tasks
+# YuCode Claude Code 风格 TUI Tasks
 
 ## T1：替换界面组件
 
-**文件：** `src/mewcode/tui/widgets.py`
+**文件：** `src/yucode/tui/widgets.py`
 
 - [x] 实现带小猫字符画和环境信息、无固定示例提示的 `WelcomePanel`。
 - [x] 实现 `Composer(TextArea)`，支持 `Enter` 发送与 `Shift+Enter` 换行。
@@ -13,7 +13,7 @@
 
 ## T2：调整应用状态流转
 
-**文件：** `src/mewcode/tui/app.py`
+**文件：** `src/yucode/tui/app.py`
 
 - [x] 启动时挂载欢迎页，首轮提交后切换到聊天记录。
 - [x] 接入 `Composer.Submitted`，并保留流式 Worker、自动滚动、错误恢复和取消逻辑。
@@ -21,7 +21,7 @@
 
 ## T3：更新主题与自动化测试
 
-**文件：** `src/mewcode/tui/app.tcss`、`tests/test_tui.py`
+**文件：** `src/yucode/tui/app.tcss`、`tests/test_tui.py`
 
 - [x] 应用深灰/青蓝主题、无顶部栏消息布局和底部状态行。
 - [x] 覆盖欢迎页、首轮切换、Enter、Shift+Enter、thinking、错误、取消与多轮历史。

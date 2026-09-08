@@ -1,4 +1,4 @@
-# MewCode 权限模式边界与内嵌确认 Plan
+# YuCode 权限模式边界与内嵌确认 Plan
 
 ## 架构概览
 
@@ -83,7 +83,7 @@ class ChatApp:
 
 ## 模块设计
 
-### `src/mewcode/permissions.py`
+### `src/yucode/permissions.py`
 
 **职责变化：** 将四档状态作为唯一会话权限来源，维护并恢复最近的 Do 状态；同时承接任务执行意图分类、敏感信息脱敏和最终权限裁决，使外部模块不能直接产生权限拒绝。
 
@@ -91,31 +91,31 @@ class ChatApp:
 
 **状态与裁决策略：** `set_mode(plan)` 首次进入时保存当前 Do 状态；`set_mode` 接受任一 Do 状态时更新恢复值。`resume_do_mode` 在 Plan 外调用时保持当前状态，在 Plan 内恢复已保存值或 default。`evaluate` 按 Spec F9 的顺序返回唯一结果；acceptEdits 仅自动允许已获用户执行授权、满足流程前置条件且位于项目内的 `write_file`/`edit_file`。
 
-### `src/mewcode/workflow.py`
+### `src/yucode/workflow.py`
 
 **职责：** 承接原执行策略中的工具流程状态和前置条件，返回 `WorkflowIssue`，不再拥有权限裁决能力。
 
 **边界：** 不读取权限模式或规则，不进行任务意图分类，不弹出确认，不直接构造拒绝工具结果。原 `policy.py` 删除。
 
-### `src/mewcode/tools/executor.py`
+### `src/yucode/tools/executor.py`
 
 **职责变化：** 解析工具和参数后只调用 `PermissionManager.evaluate()`。结果为 ASK 时仍由权限管理器处理人工确认；结果为 DENY 时统一转换为结构化 `ToolResult`；结果为 ALLOW 才执行真实工具。工具结束后只调用 `ToolWorkflow.record()` 更新证据。
 
 **边界：** 未知工具和无效参数仍属于执行器输入错误；已注册工具的 Plan、任务授权、流程、规则与模式结果全部来自权限管理器。
 
-### `src/mewcode/agent.py`
+### `src/yucode/agent.py`
 
 **职责变化：** 删除来自 UI 的独立 Do/Plan 模式输入，以权限管理器当前状态作为每次运行的唯一模式来源。Agent 在 plan 时选择既有只读工具集合与规划提示，在其他三档选择完整工具集合；每轮创建 `TaskAuthorization` 与 `ToolWorkflow`，交给执行器作为统一裁决输入。
 
 **对外接口：** `Agent.run` 不再接收外部 RunMode；保留内部将权限状态映射为提示运行模式的逻辑。原有拒绝回灌、取消、迭代上限和验证追踪不变。
 
-### `src/mewcode/tui/widgets.py`
+### `src/yucode/tui/widgets.py`
 
 **职责变化：** 删除模态 `PermissionConfirmation`，新增聊天流内的 `InlinePermissionCard`。卡片用文本高亮表示当前选择，提供 1–4、方向键、Enter、Escape 的键盘语义及执行结果展示。
 
 **依赖：** 权限请求、确认选择和工具结果；不依赖 Agent、执行器或 Future。
 
-### `src/mewcode/tui/app.py`
+### `src/yucode/tui/app.py`
 
 **职责变化：** 以权限管理器状态替代 `_mode`；`/plan` 调用 `set_mode(plan)`，`/do` 调用 `resume_do_mode`，Shift+Tab 调用 `set_mode`。状态栏统一读取权限管理器当前值。
 
@@ -157,7 +157,7 @@ class ChatApp:
 ## 文件组织
 
 ```text
-src/mewcode/
+src/yucode/
 ├── permissions.py       # 唯一权限裁决、执行意图、规则与模式
 ├── workflow.py          # 读取/编辑/验证流程证据与可修复问题
 ├── agent.py             # 从权限状态选择工具集合和提示模式

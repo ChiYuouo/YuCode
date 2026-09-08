@@ -1,4 +1,4 @@
-# 将本文件复制为 mewcode.yaml，再填写真实 api_key。不要提交真实密钥。
+# 将本文件复制为 yucode.yaml，再填写真实 api_key。不要提交真实密钥。
 protocol: anthropic
 model: claude-sonnet-4-6
 base_url: https://api.anthropic.com

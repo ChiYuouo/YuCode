@@ -1,10 +1,10 @@
-# MewCode 首个对话版本 Plan
+# YuCode 首个对话版本 Plan
 
 ## 架构概览
 
-MewCode 分为配置、会话、Provider 和终端 UI 四层。
+YuCode 分为配置、会话、Provider 和终端 UI 四层。
 
-- 配置层读取并校验当前目录的 `mewcode.yaml`。
+- 配置层读取并校验当前目录的 `yucode.yaml`。
 - 会话层维护本次运行的用户与助手文本历史，并协调一次请求的开始、流式输出、完成或中断。
 - Provider 层将统一消息历史转为对应厂商的 HTTP/SSE 请求，再把厂商事件转换为统一流事件。
 - 终端 UI 负责提示输入、区分显示思考与正式回答、显示错误，以及处理退出和中断。
@@ -59,7 +59,7 @@ stream(messages: Sequence[Message]) -> Iterator[StreamEvent]
 - `providers.openai`：调用 `{base_url}/responses`，发送完整本地历史、`stream: true`、`store: false`；只将 `response.output_text.delta` 转换为文本事件。
 - `providers.anthropic`：调用 `{base_url}/v1/messages`，发送完整本地历史与 Anthropic 认证头；启用思考时发送 adaptive、summarized thinking 配置；将 `thinking_delta` 和 `text_delta` 分别映射为统一事件。
 - `conversation`：提交用户消息后消费 Provider 流，将文本实时交给 UI 并累积。正常完成时保存正式回答；中断或失败时，若已输出正式文本则保存该不完整文本，否则撤销本轮用户消息。
-- `cli`：使用 Rich 做简洁终端显示。收到首个思考或文本片段时分别打印“思考：”或“MewCode：”标签，后续片段原样追加。`/exit`、`/quit`、输入阶段的 `Ctrl+C` 或 `Ctrl+D` 退出；输出阶段的 `Ctrl+C` 关闭本轮流并返回输入提示。
+- `cli`：使用 Rich 做简洁终端显示。收到首个思考或文本片段时分别打印“思考：”或“YuCode：”标签，后续片段原样追加。`/exit`、`/quit`、输入阶段的 `Ctrl+C` 或 `Ctrl+D` 退出；输出阶段的 `Ctrl+C` 关闭本轮流并返回输入提示。
 
 ## 模块交互
 
@@ -77,8 +77,8 @@ stream(messages: Sequence[Message]) -> Iterator[StreamEvent]
 ```text
 project/
 ├── pyproject.toml
-├── mewcode.yaml.example
-├── src/mewcode/
+├── yucode.yaml.example
+├── src/yucode/
 │   ├── cli.py
 │   ├── config.py
 │   ├── conversation.py
@@ -93,7 +93,7 @@ project/
     └── test_providers.py
 ```
 
-`pyproject.toml` 定义 Python 3.12、`mewcode` 命令行入口，以及运行依赖 `httpx`、`PyYAML`、`rich` 和测试依赖 `pytest`。
+`pyproject.toml` 定义 Python 3.12、`yucode` 命令行入口，以及运行依赖 `httpx`、`PyYAML`、`rich` 和测试依赖 `pytest`。
 
 ## 技术决策
 

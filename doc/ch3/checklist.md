@@ -1,10 +1,10 @@
-# MewCode Agent Loop Checklist
+# YuCode Agent Loop Checklist
 
 > 每项均通过运行代码、检查事件或在 WSL tmux 中观察真实交互验证；验收时记录实际结果后再勾选。
 
 ## Agent 循环与停止条件
 
-- [x] AC1：模型连续请求两轮及以上工具时，MewCode 自动执行、回灌并继续，直到无工具响应后正常结束。验证：运行 `.venv\Scripts\python.exe -m pytest tests/test_agent.py -q -k "loop or completed"`；期望调用次数、历史和最终 `COMPLETED` 事件断言通过。
+- [x] AC1：模型连续请求两轮及以上工具时，YuCode 自动执行、回灌并继续，直到无工具响应后正常结束。验证：运行 `.venv\Scripts\python.exe -m pytest tests/test_agent.py -q -k "loop or completed"`；期望调用次数、历史和最终 `COMPLETED` 事件断言通过。
 - [x] AC2：默认上限为 10，可配置覆盖，触顶后不执行最后响应中新请求的工具，也不发起下一次模型调用。验证：运行 `.venv\Scripts\python.exe -m pytest tests/test_agent.py tests/test_config.py -q -k "limit or max_iterations"`；期望默认、覆盖、无效配置、失败结果和调用次数断言通过。
 - [x] AC3：模型流和命令执行期间取消都会尽快结束，且不再启动后续循环。验证：运行 `.venv\Scripts\python.exe -m pytest tests/test_agent.py tests/test_tools.py tests/test_tui.py -q -k "cancel"`；期望停止原因为 `CANCELLED`、命令进程已回收、输入恢复且无额外调用。
 - [x] AC4：一轮全为未知工具时允许回灌纠正，连续第二轮仍全未知时停止；任一已注册工具出现后计数清零。验证：运行 `.venv\Scripts\python.exe -m pytest tests/test_agent.py -q -k "unknown"`；期望三种计数路径和 `UNKNOWN_TOOL_LIMIT` 断言通过。
@@ -37,14 +37,14 @@
 ## 构建与自动化测试
 
 - [x] Python 源码可编译。验证：运行 `.venv\Scripts\python.exe -m compileall -q src`；期望退出码为 0 且无错误输出。
-- [x] 不再存在旧的同步 Provider 或单工具轮次入口。验证：运行 `rg -n "def stream\(|run_turn|本轮工具调用上限|首次响应只执行一个" src/mewcode`；期望 Provider 定义均为 `async def stream`，其余旧状态机标记无匹配。
+- [x] 不再存在旧的同步 Provider 或单工具轮次入口。验证：运行 `rg -n "def stream\(|run_turn|本轮工具调用上限|首次响应只执行一个" src/yucode`；期望 Provider 定义均为 `async def stream`，其余旧状态机标记无匹配。
 - [x] 全部自动化测试通过。验证：运行 `.venv\Scripts\python.exe -m pytest -q`；期望退出码为 0 且无失败、错误或悬挂。
 - [x] 项目未配置 lint 工具，本章不新增独立 lint 门禁。验证：检查 `pyproject.toml`；若后续加入 lint 配置，则运行对应命令并要求退出码为 0。
 
 ## tmux 端到端场景
 
-- [x] tmux 会话可启动。验证：运行 `wsl.exe tmux new-session -d -s mewcode-ch3 "cd /mnt/c/develop/Mewcode && .venv/Scripts/python.exe -m mewcode"`，再运行 `wsl.exe tmux capture-pane -p -t mewcode-ch3`；期望看到 MewCode 欢迎界面而非 shell 或启动错误。
-- [ ] AC14 / 场景 1（OpenAI 完整 Agent）：使用 OpenAI 配置，在 `mewcode-ch3` 会话请求“在临时测试目录创建一个文本文件，写入指定内容，再读取它验证内容，最后总结执行结果”。期望无需追加催促即可依次看到写入、读取和最终回复，停止原因正常，文件内容正确，输入恢复可用。
+- [x] tmux 会话可启动。验证：运行 `wsl.exe tmux new-session -d -s yucode-ch3 "cd <项目根目录> && .venv/Scripts/python.exe -m yucode"`，再运行 `wsl.exe tmux capture-pane -p -t yucode-ch3`；期望看到 YuCode 欢迎界面而非 shell 或启动错误。
+- [ ] AC14 / 场景 1（OpenAI 完整 Agent）：使用 OpenAI 配置，在 `yucode-ch3` 会话请求“在临时测试目录创建一个文本文件，写入指定内容，再读取它验证内容，最后总结执行结果”。期望无需追加催促即可依次看到写入、读取和最终回复，停止原因正常，文件内容正确，输入恢复可用。
 - [ ] AC14 / 场景 2（Claude 完整 Agent）：切换到 Claude 配置后重复场景 1。期望工具闭环、事件显示、停止原因和最终文件结果与 OpenAI 行为一致。
 - [ ] 场景 3（Plan Mode 只读）：记录工作区状态后，在 tmux 输入 `/plan 分析如何给 README 增加安装示例，只输出计划`。期望可出现读取、查找或搜索活动，不能出现写入、修改或命令活动；结束后工作区状态与测试前一致。
 - [ ] 场景 4（独立 `/do`）：在同一会话输入 `/do 按以下内容执行：在临时测试目录创建 plan-do.txt，写入 done 并读回确认`。期望共享此前对话但仅执行本次正文，完成写入和验证；单独输入 `/do` 时只显示用法，历史长度不增加。
@@ -54,7 +54,7 @@
 
 - 自动化测试：2026-09-07 运行 `.venv\Scripts\python.exe -m pytest -q`，76 项通过，退出码 0。
 - 编译与旧入口检查：`compileall` 退出码 0；旧状态机标记无匹配，三个 Provider 定义均为异步流。
-- tmux：`mewcode-ch3` 成功显示欢迎界面；空 `/do` 仅显示用法且消息数保持 0；模型连接阶段按 Ctrl+C 后约 0.5 秒恢复“准备就绪”。
+- tmux：`yucode-ch3` 成功显示欢迎界面；空 `/do` 仅显示用法且消息数保持 0；模型连接阶段按 Ctrl+C 后约 0.5 秒恢复“准备就绪”。
 - OpenAI 端到端：当前工作区没有可用的 OpenAI 配置，未执行真实服务验收。
 - Claude 端到端：当前配置的 `https://whitepolar.app/v1/messages` 在 POST 连接阶段发生 `ConnectTimeout`；错误能显示且输入可恢复，但无法完成真实工具闭环。
 - 未通过项：tmux 场景 1～5 中，完整 OpenAI、Claude、Plan、`/do` 和命令取消闭环尚无真实模型响应证据。修复方案：服务恢复或提供可用 OpenAI/Claude 配置后，按本节五个场景复测；测试期间未创建任何验收临时文件。
@@ -78,7 +78,7 @@
 
 - [x] TUI 回归：运行 `.venv\Scripts\python.exe -m pytest tests/test_tui.py -q`；期望活动帧、工具替换、模式菜单、流式显示、取消与命令确认测试全部通过。
 - [x] 全量回归：运行 `.venv\Scripts\python.exe -m pytest -q` 与 `.venv\Scripts\python.exe -m compileall -q src`；期望均退出码 0。
-- [ ] tmux 动效场景：启动 MewCode，发起一个只读 Plan 请求；期望依次观察模型等待、思考标题、进行中工具行和静态工具结果；在下一次等待时按 Ctrl+C，期望活动立即停止并恢复输入。
+- [ ] tmux 动效场景：启动 YuCode，发起一个只读 Plan 请求；期望依次观察模型等待、思考标题、进行中工具行和静态工具结果；在下一次等待时按 Ctrl+C，期望活动立即停止并恢复输入。
 
 ## 补充验收记录
 

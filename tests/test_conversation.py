@@ -1,6 +1,6 @@
-from mewcode.conversation import Conversation
-from mewcode.providers.base import TextContent, ToolCallContent, ToolResultContent
-from mewcode.tools.base import ToolCall, ToolResult
+from yucode.conversation import Conversation
+from yucode.providers.base import TextContent, ToolCallContent, ToolResultContent
+from yucode.tools.base import ToolCall, ToolResult
 
 
 def test_stores_complete_assistant_response_and_results_in_order() -> None:
