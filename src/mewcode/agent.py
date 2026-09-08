@@ -8,17 +8,19 @@ from enum import Enum
 
 from mewcode.cancellation import Cancellation
 from mewcode.conversation import Conversation
-from mewcode.policy import ExecutionPolicy, SensitiveDataRedactor, classify_authorization
+from mewcode.permissions import (
+    ApprovalCallback,
+    PermissionManager,
+    PermissionMode,
+    SensitiveDataRedactor,
+    classify_authorization,
+)
 from mewcode.prompting import RuntimeContext, SystemPromptBuilder
 from mewcode.providers.base import Provider, ProviderError, StreamCancelled, Usage
 from mewcode.tools.base import ToolCall, ToolResult
-from mewcode.tools.executor import ApprovalCallback, ToolExecutor
+from mewcode.tools.executor import ToolExecutor
 from mewcode.tools.registry import ToolRegistry
-
-
-class RunMode(str, Enum):
-    FULL = "full"
-    PLAN = "plan"
+from mewcode.workflow import ToolWorkflow
 
 
 class StopReason(str, Enum):
@@ -28,7 +30,6 @@ class StopReason(str, Enum):
     UNKNOWN_TOOL_LIMIT = "unknown_tool_limit"
     STREAM_ERROR = "stream_error"
     VERIFICATION_REQUIRED = "verification_required"
-    POLICY_VIOLATION = "policy_violation"
 
 
 class ProgressPhase(str, Enum):
@@ -112,13 +113,15 @@ class Agent:
         registry: ToolRegistry,
         max_iterations: int = 10,
         prompt_builder: SystemPromptBuilder | None = None,
+        permissions: PermissionManager | None = None,
     ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations 必须是正整数。")
         self._provider = provider
         self._conversation = conversation
         self._registry = registry
-        self._executor = ToolExecutor(registry)
+        self._permissions = permissions or PermissionManager(registry.context.root)
+        self._executor = ToolExecutor(registry, self._permissions)
         self._max_iterations = max_iterations
         self._prompt_builder = prompt_builder or SystemPromptBuilder()
         self._redactor = SensitiveDataRedactor()
@@ -127,19 +130,25 @@ class Agent:
     def conversation(self) -> Conversation:
         return self._conversation
 
+    @property
+    def permissions(self) -> PermissionManager:
+        return self._permissions
+
     async def run(
         self,
         text: str,
-        mode: RunMode,
         cancellation: Cancellation,
-        approve_command: ApprovalCallback | None = None,
+        approve: ApprovalCallback | None = None,
     ) -> AsyncIterator[AgentEvent]:
         self._conversation.append_user(text)
         total = Usage()
         visible_parts: list[str] = []
         unknown_rounds = 0
         verification_misses = 0
-        policy = ExecutionPolicy(classify_authorization(text, mode.value), self._registry.context.root)
+        is_plan = self._permissions.mode is PermissionMode.PLAN
+        runtime_mode = "plan" if is_plan else "full"
+        authorization = classify_authorization(text, runtime_mode)
+        workflow = ToolWorkflow(self._registry.context.root)
 
         for iteration in range(1, self._max_iterations + 1):
             if cancellation.is_cancelled:
@@ -154,18 +163,18 @@ class Agent:
                 f"第 {iteration}/{self._max_iterations} 轮：正在请求模型",
             )
             response = _CollectedResponse()
-            requires_verification = bool(policy.pending_verifications)
-            requires_guarded_response = requires_verification or policy.blocking_failure
+            requires_verification = bool(workflow.pending_verifications)
+            requires_guarded_response = requires_verification
             try:
-                tools = self._registry.read_only_definitions if mode is RunMode.PLAN else self._registry.definitions
+                tools = self._registry.read_only_definitions if is_plan else self._registry.definitions
                 request = self._prompt_builder.build(
                     RuntimeContext(
                         self._registry.context.root,
-                        mode.value,
+                        runtime_mode,
                         iteration,
-                        policy.authorization.value,
-                        tuple(sorted(policy.pending_verifications)),
-                        policy.blocking_failure,
+                        authorization.value,
+                        tuple(sorted(workflow.pending_verifications)),
+                        False,
                     ),
                     tools,
                     self._conversation.messages,
@@ -215,7 +224,7 @@ class Agent:
                 visible_parts.append(response.text)
 
             if not response.calls:
-                if policy.pending_verifications:
+                if workflow.pending_verifications:
                     if verification_misses >= 1:
                         async for event in self._finish(
                             StopReason.VERIFICATION_REQUIRED,
@@ -229,17 +238,6 @@ class Agent:
                         return
                     verification_misses += 1
                     continue
-                if policy.blocking_failure:
-                    async for event in self._finish(
-                        StopReason.POLICY_VIOLATION,
-                        visible_parts,
-                        total,
-                        iteration,
-                        "操作未满足任务授权或工具流程，任务未完成。",
-                        "操作被策略拒绝；请先满足授权、读取或验证前置条件。",
-                    ):
-                        yield event
-                    return
                 self._conversation.append_assistant(response.text)
                 async for event in self._finish(StopReason.COMPLETED, visible_parts, total, iteration, "任务已完成。"):
                     yield event
@@ -270,9 +268,8 @@ class Agent:
                 iteration, self._max_iterations, ProgressPhase.TOOLS,
                 f"第 {iteration}/{self._max_iterations} 轮：正在执行 {len(response.calls)} 个工具",
             )
-            allowed_names = frozenset(definition.name for definition in tools)
             results = await self._executor.execute_many(
-                response.calls, cancellation, approve_command, allowed_names, policy
+                response.calls, cancellation, authorization, workflow, approve
             )
             results = [self._redactor.redact_result(result) for result in results]
             self._conversation.append_tool_results(results)

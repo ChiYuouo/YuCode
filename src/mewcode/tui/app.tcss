@@ -77,6 +77,19 @@ Screen {
     text-style: italic;
 }
 
+.permission-card {
+    width: 1fr;
+    margin: 0 0 1 2;
+    padding: 1 2;
+    color: #e8eeee;
+    background: #202425;
+    border: round #c99535;
+}
+
+.permission-card:focus {
+    border: round #f3c969;
+}
+
 .error-message {
     padding: 0;
 }

@@ -7,12 +7,12 @@ from pathlib import Path
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.message import Message
-from textual.screen import ModalScreen
-from textual.widgets import Button, Collapsible, Markdown, OptionList, Static, TextArea
+from textual.widgets import Collapsible, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
+from mewcode.permissions import ApprovalChoice, PermissionRequest
 from mewcode.tools.base import ToolCall, ToolResult
 from mewcode.providers.base import CacheUsage
 
@@ -37,7 +37,14 @@ class Composer(TextArea):
 
     async def _on_key(self, event: events.Key) -> None:
         """拦截提交键，其余编辑行为沿用 TextArea。"""
+        if self.app.handle_permission_key(event):
+            return
         if self.app.handle_composer_key(self, event):
+            return
+        if event.key == "shift+tab":
+            event.stop()
+            event.prevent_default()
+            self.app.action_cycle_permission_mode()
             return
         if event.key == "enter":
             event.stop()
@@ -262,11 +269,24 @@ class PendingToolActivity(ToolActivity):
         self.call_id = call.id
         self.tool_name = call.name
         self._active = True
+        self._waiting_permission = False
         self.advance(SPINNER_FRAMES[0])
 
     def advance(self, frame: str) -> None:
-        if self._active:
+        if self._active and not self._waiting_permission:
             self.update(f"{frame} 正在执行工具 {self.tool_name}…")
+
+    def wait_for_permission(self) -> None:
+        """明确表示工具仍未执行，正在等待用户决定。"""
+        if self._active:
+            self._waiting_permission = True
+            self.update(f"? 工具 {self.tool_name}：正在等待权限确认，尚未执行")
+
+    def resume_execution(self) -> None:
+        """用户允许后恢复工具活动提示。"""
+        if self._active:
+            self._waiting_permission = False
+            self.update(f"◐ 工具 {self.tool_name}：已确认，正在执行…")
 
     def finish(self, result: ToolResult) -> None:
         self._active = False
@@ -280,24 +300,99 @@ class PendingToolActivity(ToolActivity):
             self.update(f"! 工具 {self.tool_name}：已停止")
 
 
-class CommandConfirmation(ModalScreen[bool]):
-    """命令真正启动前展示的明确确认弹窗。"""
+class InlinePermissionCard(Static):
+    """显示在聊天流内、由键盘完成选择的权限确认卡片。"""
 
-    def __init__(self, command: str) -> None:
-        super().__init__()
-        self._command = command
+    can_focus = True
+    _CHOICES = (
+        (ApprovalChoice.ONCE, "仅本次允许"),
+        (ApprovalChoice.SESSION, "本会话允许"),
+        (ApprovalChoice.PERMANENT, "永久允许"),
+        (ApprovalChoice.REJECT, "拒绝"),
+    )
 
-    def compose(self) -> ComposeResult:
-        yield Vertical(
-            Static("模型请求执行以下 PowerShell 命令：", classes="confirm-title"),
-            Static(self._command, classes="confirm-command", markup=False),
-            Horizontal(
-                Button("执行", variant="success", id="approve-command"),
-                Button("拒绝", variant="error", id="reject-command"),
-                classes="confirm-actions",
-            ),
-            id="command-confirmation",
+    class Selected(Message):
+        """卡片完成一次明确选择。"""
+
+        def __init__(self, card: InlinePermissionCard, choice: ApprovalChoice) -> None:
+            super().__init__()
+            self.card = card
+            self.choice = choice
+
+    def __init__(self, request: PermissionRequest) -> None:
+        super().__init__(classes="message permission-card", markup=False)
+        self._request = request
+        self.call_id = request.call.id
+        self._highlighted = 0
+        self._choice: ApprovalChoice | None = None
+        self._result: ToolResult | None = None
+        self._update_display()
+
+    def handle_key(self, key: str) -> ApprovalChoice | None:
+        """处理确认专用按键；未消费的按键交还给普通界面。"""
+        if self._choice is not None or self._result is not None:
+            return None
+        if key in {"1", "2", "3", "4"}:
+            self._highlighted = int(key) - 1
+            return self._CHOICES[self._highlighted][0]
+        if key == "up":
+            self._highlighted = (self._highlighted - 1) % len(self._CHOICES)
+            self._update_display()
+            return None
+        if key == "down":
+            self._highlighted = (self._highlighted + 1) % len(self._CHOICES)
+            self._update_display()
+            return None
+        if key == "enter":
+            return self._CHOICES[self._highlighted][0]
+        if key == "escape":
+            return ApprovalChoice.REJECT
+        return None
+
+    def mark_selected(self, choice: ApprovalChoice) -> None:
+        """原地显示用户已选择，工具仍等待执行结果。"""
+        if self._choice is None:
+            self._choice = choice
+            self._update_display()
+
+    def finish(self, result: ToolResult) -> None:
+        """工具完成或被拒绝后原地显示最终结果。"""
+        self._result = result
+        self._update_display()
+
+    def _on_key(self, event: events.Key) -> None:
+        choice = self.handle_key(event.key)
+        if choice is not None:
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Selected(self, choice))
+            return
+        if event.key in {"up", "down"} and self._choice is None and self._result is None:
+            event.stop()
+            event.prevent_default()
+
+    def _update_display(self) -> None:
+        title = (
+            "权限确认结果"
+            if self._result is not None
+            else "权限已确认（正在继续）"
+            if self._choice is not None
+            else "需要权限确认（操作尚未执行）"
         )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(event.button.id == "approve-command")
+        content = Text(title, style="bold #f3c969")
+        content.append(f"\n{self._request.summary}", style="#edf4f5")
+        content.append(f"\n{self._request.impact}", style="#9ba6aa")
+        if self._result is not None:
+            marker = "✓" if self._result.success else "!"
+            color = "#7ee787" if self._result.success else "#ffb4a9"
+            content.append(f"\n{marker} {self._result.summary}", style=color)
+        elif self._choice is not None:
+            label = dict(self._CHOICES)[self._choice]
+            content.append(f"\n已选择：{label}，正在继续…", style="#63d8ef")
+        else:
+            content.append("\n使用数字 1–4，或 ↑/↓ 后 Enter 选择；Esc 拒绝。", style="#778386")
+            for index, (_, label) in enumerate(self._CHOICES, start=1):
+                pointer = "›" if index - 1 == self._highlighted else " "
+                color = "#63d8ef" if index - 1 == self._highlighted else "#c8d2d5"
+                content.append(f"\n{pointer} {index}. {label}", style=color)
+        self.update(content)

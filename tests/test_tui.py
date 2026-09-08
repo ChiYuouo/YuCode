@@ -7,13 +7,14 @@ from textual.widgets import Markdown
 from mewcode.agent import Agent, ToolCallStarted, ToolResultReady
 from mewcode.config import ProviderConfig
 from mewcode.conversation import Conversation
+from mewcode.permissions import ApprovalChoice, PermissionManager, PermissionMode
 from mewcode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
 from mewcode.tools.base import ToolCall, ToolResult
 from mewcode.tools.registry import ToolRegistry
 from mewcode.tui.app import ChatApp
 from mewcode.tui.widgets import (
     AssistantMessage, ChatStatus, Composer, ErrorMessage, GenerationIndicator,
-    ModeMenu, PendingToolActivity, ThinkingBox, ToolActivity, WelcomePanel,
+    InlinePermissionCard, ModeMenu, PendingToolActivity, ThinkingBox, ToolActivity, WelcomePanel,
 )
 
 
@@ -28,9 +29,10 @@ class FakeProvider:
         yield StreamEvent("usage", usage=Usage(input_tokens=3, output_tokens=5, thinking_tokens=2))
 
 
-def app_for_test(provider=None, root: Path | None = None) -> ChatApp:
+def app_for_test(provider=None, root: Path | None = None, permission_mode=PermissionMode.DEFAULT) -> ChatApp:
     provider = provider or FakeProvider()
-    agent = Agent(provider, Conversation(), ToolRegistry(root or Path.cwd()))
+    registry = ToolRegistry(root or Path.cwd())
+    agent = Agent(provider, Conversation(), registry, permissions=PermissionManager(registry.context.root, permission_mode))
     return ChatApp(
         agent,
         ProviderConfig("anthropic", "claude-test", "https://example.test", "key", True),
@@ -251,7 +253,7 @@ def test_tui_mode_menu_switches_session_mode_and_shares_history(tmp_path: Path) 
             prompt.text = "/d"
             await pilot.press("enter")
             await pilot.pause(0.1)
-            assert "模式:Do" in str(app.query_one(ChatStatus).render())
+            assert "模式:Default" in str(app.query_one(ChatStatus).render())
 
             for text in ("执行", "普通消息"):
                 prompt.text = text
@@ -260,6 +262,39 @@ def test_tui_mode_menu_switches_session_mode_and_shares_history(tmp_path: Path) 
             assert len(provider.requests[1].tools) == 6
             assert len(provider.requests[2].history) == 5
             assert "› 分析" in str(app.query(".user-message").first().render())
+
+    asyncio.run(check())
+
+
+def test_tui_shift_tab_cycles_permission_modes_and_updates_status(tmp_path: Path) -> None:
+    async def check() -> None:
+        app = app_for_test(root=tmp_path)
+        async with app.run_test() as pilot:
+            status = app.query_one(ChatStatus)
+            assert "模式:Default" in str(status.render())
+            for expected in ("AcceptEdits", "Plan", "BypassPermissions", "Default"):
+                await pilot.press("shift+tab")
+                await pilot.pause(0.05)
+                assert f"模式:{expected}" in str(status.render())
+
+    asyncio.run(check())
+
+
+def test_tui_do_restores_the_previous_do_permission_mode(tmp_path: Path) -> None:
+    async def check() -> None:
+        app = app_for_test(root=tmp_path)
+        async with app.run_test() as pilot:
+            app._set_permission_mode(PermissionMode.ACCEPT_EDITS)
+            app._activate_mode("plan")
+            assert app._agent.permissions.mode is PermissionMode.PLAN
+            app._activate_mode("do")
+            assert app._agent.permissions.mode is PermissionMode.ACCEPT_EDITS
+
+            app._set_permission_mode(PermissionMode.BYPASS_PERMISSIONS)
+            app._activate_mode("plan")
+            app._activate_mode("do")
+            assert app._agent.permissions.mode is PermissionMode.BYPASS_PERMISSIONS
+            await pilot.pause()
 
     asyncio.run(check())
 
@@ -297,7 +332,7 @@ def test_tui_mode_menu_supports_keyboard_navigation(tmp_path: Path) -> None:
             await pilot.press("down")
             await pilot.press("enter")
             await pilot.pause(0.1)
-            assert "模式:Do" in str(app.query_one(ChatStatus).render())
+            assert "模式:Default" in str(app.query_one(ChatStatus).render())
             assert prompt.text == ""
 
     asyncio.run(check())
@@ -332,10 +367,10 @@ def test_tui_shows_tool_summary_and_final_answer(tmp_path: Path) -> None:
                 yield event
 
     async def check() -> None:
-        app = app_for_test(ToolProvider(), tmp_path)
+        app = app_for_test(ToolProvider(), tmp_path, PermissionMode.ACCEPT_EDITS)
         async with app.run_test() as pilot:
             prompt = app.query_one(Composer)
-            prompt.text = "创建文件"
+            prompt.text = "写一个数字 1 到 answer.txt"
             await pilot.press("enter")
             await pilot.pause(0.3)
             assert (tmp_path / "answer.txt").read_text(encoding="utf-8") == "ok"
@@ -364,11 +399,31 @@ def test_tui_command_rejection_returns_to_chat(tmp_path: Path) -> None:
             prompt.text = "运行目录命令"
             await pilot.press("enter")
             await pilot.pause(0.1)
-            assert app.screen.query_one("#reject-command")
-            await pilot.click("#reject-command")
+            card = app.query_one(InlinePermissionCard)
+            assert "操作尚未执行" in str(card.render())
+            assert "1. 仅本次允许" in str(card.render())
+            assert "4. 拒绝" in str(card.render())
+            await pilot.press("4")
             await pilot.pause(0.3)
             assert app.query_one(ToolActivity)
+            assert "权限确认结果" in str(card.render())
+            assert "用户拒绝该调用" in str(card.render())
             assert prompt.disabled is False
+
+    asyncio.run(check())
+
+
+def test_inline_permission_card_supports_arrow_enter_and_escape() -> None:
+    async def check() -> None:
+        app = app_for_test()
+        async with app.run_test() as pilot:
+            request = PermissionManager(Path.cwd()).request_for(ToolCall("call", "write_file", {"path": "a.txt"}))
+            card = InlinePermissionCard(request)
+            await app.query_one("#chat-view", VerticalScroll).mount(card)
+            assert card.handle_key("down") is None
+            assert card.handle_key("enter") is ApprovalChoice.SESSION
+            assert card.handle_key("escape") is ApprovalChoice.REJECT
+            await pilot.pause()
 
     asyncio.run(check())
 

@@ -12,19 +12,19 @@ from textual.timer import Timer
 from textual.widgets import OptionList, TextArea
 
 from mewcode.agent import (
-    Agent, AgentFinished, ProgressPhase, ProgressUpdated, RunMode, TextDelta,
+    Agent, AgentFinished, ProgressPhase, ProgressUpdated, TextDelta,
     ThinkingDelta, ToolCallStarted, ToolResultReady, UsageUpdated,
 )
 from mewcode.cancellation import Cancellation
 from mewcode.config import ProviderConfig
+from mewcode.permissions import ApprovalChoice, PermissionMode, PermissionRequest
 from mewcode.providers.base import CacheUsage
-from mewcode.tools.base import ToolCall
 from mewcode.tui.widgets import (
     AssistantMessage,
     ChatStatus,
-    CommandConfirmation,
     Composer,
     ErrorMessage,
+    InlinePermissionCard,
     ModeMenu,
     PendingToolActivity,
     SPINNER_FRAMES,
@@ -57,7 +57,16 @@ class ChatApp(App[None]):
     """单会话、单异步 Agent Worker 的聊天界面。"""
 
     CSS_PATH = "app.tcss"
-    BINDINGS = [("ctrl+c", "cancel_generation", "停止生成")]
+    BINDINGS = [
+        ("ctrl+c", "cancel_generation", "停止生成"),
+        ("shift+tab", "cycle_permission_mode", "切换权限模式"),
+    ]
+    _PERMISSION_MODES = (
+        PermissionMode.DEFAULT,
+        PermissionMode.ACCEPT_EDITS,
+        PermissionMode.PLAN,
+        PermissionMode.BYPASS_PERMISSIONS,
+    )
 
     def __init__(self, agent: Agent, config: ProviderConfig) -> None:
         super().__init__()
@@ -71,8 +80,9 @@ class ChatApp(App[None]):
         self._assistant_message: AssistantMessage | None = None
         self._generating = False
         self._has_started_chat = False
-        self._pending_approval: asyncio.Future[bool] | None = None
-        self._mode = RunMode.FULL
+        self._pending_approval: asyncio.Future[ApprovalChoice] | None = None
+        self._active_permission_card: InlinePermissionCard | None = None
+        self._permission_cards: dict[str, InlinePermissionCard] = {}
         self._activity_timer: Timer | None = None
         self._activity_frame = 0
         self._pending_tools: dict[str, PendingToolActivity] = {}
@@ -83,13 +93,13 @@ class ChatApp(App[None]):
         )
         yield ModeMenu()
         yield Composer(
-            placeholder="输入消息…  Enter 发送 · Shift+Enter 换行", id="prompt", soft_wrap=True
+            placeholder="输入消息…  Enter 发送 · Shift+Enter 换行 · Shift+Tab 切换权限", id="prompt", soft_wrap=True
         )
         yield ChatStatus(self._config.protocol, self._config.model)
 
     def on_mount(self) -> None:
         self.query_one(Composer).focus()
-        self.query_one(ChatStatus).set_mode("Do")
+        self._show_permission_mode()
         self._refresh_status("准备就绪")
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
@@ -97,6 +107,10 @@ class ChatApp(App[None]):
         if not isinstance(event.text_area, Composer):
             return
         self._update_mode_menu(event.text_area.text)
+
+    def on_key(self, event) -> None:
+        """即使卡片获得焦点，也让确认按键优先完成等待中的权限请求。"""
+        self.handle_permission_key(event)
 
     def on_composer_submitted(self, event: Composer.Submitted) -> None:
         if self._generating:
@@ -112,8 +126,6 @@ class ChatApp(App[None]):
         if raw_prompt.startswith("/"):
             self._show_error("请选择 /plan 或 /do 切换模式后，再输入任务。")
             return
-        mode, prompt = self._mode, raw_prompt
-
         chat = self.query_one("#chat-view", VerticalScroll)
         if not self._has_started_chat:
             self.query_one(WelcomePanel).remove()
@@ -131,7 +143,7 @@ class ChatApp(App[None]):
         self._start_activity_clock()
         self._refresh_status("正在启动 Agent · Ctrl+C 停止")
         self._scroll_to_latest(chat)
-        self.call_after_refresh(self.generate, prompt, mode, self._cancellation)
+        self.call_after_refresh(self.generate, raw_prompt, self._cancellation)
 
     def handle_composer_key(self, composer: Composer, event) -> bool:
         """在菜单显示期间由输入框接管导航键，避免失去输入焦点。"""
@@ -202,26 +214,44 @@ class ChatApp(App[None]):
 
     def _activate_mode(self, option_id: str) -> None:
         if option_id == "plan":
-            self._mode = RunMode.PLAN
-            label = "Plan"
+            self._set_permission_mode(PermissionMode.PLAN)
         elif option_id == "do":
-            self._mode = RunMode.FULL
-            label = "Do"
+            self._agent.permissions.resume_do_mode()
+            self._show_permission_mode()
         else:
             return
         self.query_one(ModeMenu).hide()
         composer = self.query_one(Composer)
         composer.clear()
         composer.focus()
-        self.query_one(ChatStatus).set_mode(label)
         self._refresh_status("准备就绪")
 
+    def action_cycle_permission_mode(self) -> None:
+        """在空闲时循环四档权限模式。"""
+        if self._generating:
+            return
+        current = self._agent.permissions.mode
+        index = self._PERMISSION_MODES.index(current)
+        self._set_permission_mode(self._PERMISSION_MODES[(index + 1) % len(self._PERMISSION_MODES)])
+        self._refresh_status("准备就绪")
+
+    def _set_permission_mode(self, mode: PermissionMode) -> None:
+        self._agent.permissions.set_mode(mode)
+        self._show_permission_mode()
+
+    def _show_permission_mode(self) -> None:
+        labels = {
+            PermissionMode.DEFAULT: "Default",
+            PermissionMode.ACCEPT_EDITS: "AcceptEdits",
+            PermissionMode.PLAN: "Plan",
+            PermissionMode.BYPASS_PERMISSIONS: "BypassPermissions",
+        }
+        self.query_one(ChatStatus).set_mode(labels[self._agent.permissions.mode])
+
     @work(group="generation", exclusive=True, exit_on_error=False)
-    async def generate(self, prompt: str, mode: RunMode, cancellation: Cancellation) -> None:
+    async def generate(self, prompt: str, cancellation: Cancellation) -> None:
         """异步消费 Agent 事件，界面不参与循环判断。"""
-        async for event in self._agent.run(
-            prompt, mode, cancellation, self._request_command_approval
-        ):
+        async for event in self._agent.run(prompt, cancellation, self._request_permission_approval):
             if isinstance(event, TextDelta):
                 await self._append_text(event.content)
             elif isinstance(event, ThinkingDelta):
@@ -264,6 +294,11 @@ class ChatApp(App[None]):
             pending.finish(event.result)
         else:
             await chat.mount(ToolActivity(event.result))
+        card = self._permission_cards.pop(event.result.call_id, None)
+        if card is not None:
+            card.finish(event.result)
+            if self._active_permission_card is card:
+                self._active_permission_card = None
         next_assistant = AssistantMessage()
         await chat.mount(next_assistant)
         self._assistant_message = next_assistant
@@ -295,6 +330,8 @@ class ChatApp(App[None]):
         self._cancellation = None
         self._assistant_message = None
         self._pending_approval = None
+        self._active_permission_card = None
+        self._permission_cards.clear()
         prompt = self.query_one("#prompt", Composer)
         prompt.disabled = False
         prompt.focus()
@@ -330,29 +367,63 @@ class ChatApp(App[None]):
     def action_cancel_generation(self) -> None:
         if self._generating and self._cancellation is not None:
             self._cancellation.cancel()
-            if self._pending_approval is not None and not self._pending_approval.done():
-                self._pending_approval.set_result(False)
-            if isinstance(self.screen, CommandConfirmation):
-                self.screen.dismiss(False)
+            self._resolve_active_permission(ApprovalChoice.REJECT)
 
-    async def _request_command_approval(self, call: ToolCall) -> bool:
+    async def _request_permission_approval(self, request: PermissionRequest) -> ApprovalChoice:
         loop = asyncio.get_running_loop()
-        pending: asyncio.Future[bool] = loop.create_future()
+        pending: asyncio.Future[ApprovalChoice] = loop.create_future()
         self._pending_approval = pending
-        command = call.arguments.get("command", "")
-
-        def resolved(approved: bool | None) -> None:
-            if not pending.done():
-                pending.set_result(bool(approved))
-
-        self.push_screen(
-            CommandConfirmation(command if isinstance(command, str) else "<无效命令>"), resolved
-        )
+        chat = self.query_one("#chat-view", VerticalScroll)
+        tool_activity = self._pending_tools.get(request.call.id)
+        if tool_activity is not None:
+            tool_activity.wait_for_permission()
+        card = InlinePermissionCard(request)
+        self._active_permission_card = card
+        self._permission_cards[request.call.id] = card
+        await chat.mount(card)
+        card.focus()
+        self._refresh_status("等待权限确认 · 选择 1–4 或 Esc")
+        self._scroll_to_latest(chat)
         try:
             return await pending
         finally:
             if self._pending_approval is pending:
                 self._pending_approval = None
+            if self._active_permission_card is card:
+                self._active_permission_card = None
+
+    def handle_permission_key(self, event) -> bool:
+        """当输入框仍持有焦点时，也优先把确认键交给活动卡片。"""
+        card = self._active_permission_card
+        if card is None:
+            return False
+        choice = card.handle_key(event.key)
+        if choice is not None:
+            event.stop()
+            event.prevent_default()
+            self._resolve_active_permission(choice)
+            return True
+        if event.key in {"up", "down"}:
+            event.stop()
+            event.prevent_default()
+            return True
+        return False
+
+    def on_inline_permission_card_selected(self, event: InlinePermissionCard.Selected) -> None:
+        """接收卡片焦点下的键盘选择。"""
+        event.stop()
+        if event.card is self._active_permission_card:
+            self._resolve_active_permission(event.choice)
+
+    def _resolve_active_permission(self, choice: ApprovalChoice) -> None:
+        card = self._active_permission_card
+        if card is not None:
+            card.mark_selected(choice)
+            pending_tool = self._pending_tools.get(card.call_id)
+            if pending_tool is not None and choice is not ApprovalChoice.REJECT:
+                pending_tool.resume_execution()
+        if self._pending_approval is not None and not self._pending_approval.done():
+            self._pending_approval.set_result(choice)
 
     def _show_error(self, content: str) -> None:
         chat = self.query_one("#chat-view", VerticalScroll)

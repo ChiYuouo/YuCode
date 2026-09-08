@@ -5,11 +5,12 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from mewcode.agent import (
-    Agent, AgentFinished, ProgressUpdated, RunMode, StopReason, TextDelta,
+    Agent, AgentFinished, ProgressUpdated, StopReason, TextDelta,
     ToolResultReady, UsageUpdated,
 )
 from mewcode.cancellation import Cancellation
 from mewcode.conversation import Conversation
+from mewcode.permissions import ApprovalChoice, PermissionMode
 from mewcode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
 from mewcode.tools.base import ToolCall
 from mewcode.tools.registry import ToolRegistry
@@ -29,9 +30,12 @@ class FakeProvider:
             yield item
 
 
-def collect(agent: Agent, text="任务", mode=RunMode.FULL, cancellation=None):
+def collect(agent: Agent, text="任务", cancellation=None, approval=None):
     async def scenario():
-        return [event async for event in agent.run(text, mode, cancellation or Cancellation())]
+        async def allow_once(_):
+            return ApprovalChoice.ONCE
+
+        return [event async for event in agent.run(text, cancellation or Cancellation(), approval or allow_once)]
 
     return asyncio.run(scenario())
 
@@ -68,10 +72,30 @@ def test_runs_multiple_tool_rounds_without_user_prompting(tmp_path: Path) -> Non
     assert finished(events).usage == Usage(6, 4, 0)
 
 
+def test_permission_denial_returns_to_model_and_allows_safe_recovery(tmp_path: Path) -> None:
+    provider = FakeProvider([
+        [StreamEvent("tool_call", tool_call=ToolCall("1", "run_command", {"command": "git reset --hard"}))],
+        [StreamEvent("tool_call", tool_call=ToolCall("2", "write_file", {"path": "safe.txt", "content": "ok"}))],
+        [StreamEvent("tool_call", tool_call=ToolCall("3", "read_file", {"path": "safe.txt"}))],
+        [StreamEvent("text", "已改用项目内文件并完成验证")],
+    ])
+    agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
+
+    events = collect(agent, "创建安全文件并验证")
+
+    results = [event.result for event in events if isinstance(event, ToolResultReady)]
+    assert results[0].error_code == "dangerous_command"
+    assert results[1].success and results[2].success
+    assert (tmp_path / "safe.txt").read_text(encoding="utf-8") == "ok"
+    assert len(provider.requests) == 4
+    assert finished(events).reason is StopReason.COMPLETED
+
+
 def test_plan_mode_only_exposes_read_tools_and_instruction(tmp_path: Path) -> None:
     provider = FakeProvider([[StreamEvent("text", "计划")]])
     agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
-    result = finished(collect(agent, "分析项目", RunMode.PLAN))
+    agent.permissions.set_mode(PermissionMode.PLAN)
+    result = finished(collect(agent, "分析项目"))
     assert result.reason is StopReason.COMPLETED
     assert {tool.name for tool in provider.requests[0].tools} == {"read_file", "find_files", "search_code"}
     assert "规划模式" in provider.requests[0].stable_instructions
@@ -83,11 +107,12 @@ def test_plan_mode_rejects_hallucinated_side_effect_tool(tmp_path: Path) -> None
         [StreamEvent("text", "无法写入，只提供计划")],
     ])
     agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
+    agent.permissions.set_mode(PermissionMode.PLAN)
 
-    events = collect(agent, "只规划", RunMode.PLAN)
+    events = collect(agent, "只规划")
 
     result = next(event.result for event in events if isinstance(event, ToolResultReady))
-    assert result.error_code == "tool_not_available"
+    assert result.error_code == "permission_plan"
     assert not (tmp_path / "forbidden.txt").exists()
     assert finished(events).reason is StopReason.COMPLETED
 
@@ -160,7 +185,7 @@ def test_cancelled_during_model_stream_stops_without_next_round(tmp_path: Path) 
             cancellation.cancel()
 
         asyncio.create_task(cancel_soon())
-        events = [event async for event in agent.run("任务", RunMode.FULL, cancellation)]
+        events = [event async for event in agent.run("任务", cancellation)]
         return provider, events
 
     provider, events = asyncio.run(scenario())
@@ -197,20 +222,50 @@ def test_agent_keeps_runtime_messages_out_of_history_and_accumulates_cache(tmp_p
     assert finished(events).usage.cache == CacheUsage(True, 5, 1)
 
 
-def test_explanation_request_rejects_write_and_never_reports_completion(tmp_path: Path) -> None:
+def test_explanation_request_rejects_write_in_all_do_modes(tmp_path: Path) -> None:
+    for mode in (
+        PermissionMode.DEFAULT,
+        PermissionMode.ACCEPT_EDITS,
+        PermissionMode.BYPASS_PERMISSIONS,
+    ):
+        target = tmp_path / f"blocked-{mode.value}.txt"
+        provider = FakeProvider([
+            [StreamEvent("tool_call", tool_call=ToolCall("1", "write_file", {"path": target.name, "content": "x"}))],
+            [StreamEvent("text", "未获得授权，未写入文件")],
+        ])
+        agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
+        agent.permissions.set_mode(mode)
+
+        events = collect(agent, "解释这段代码的作用")
+
+        result = next(event.result for event in events if isinstance(event, ToolResultReady))
+        assert result.error_code == "task_not_authorized"
+        assert not target.exists()
+        assert finished(events).reason is StopReason.COMPLETED
+        assert "未写入文件" in finished(events).text
+
+
+def test_workflow_precondition_returns_to_model_and_allows_retry(tmp_path: Path) -> None:
+    path = tmp_path / "existing.txt"
+    path.write_text("old", encoding="utf-8")
     provider = FakeProvider([
-        [StreamEvent("tool_call", tool_call=ToolCall("1", "write_file", {"path": "blocked.txt", "content": "x"}))],
-        [StreamEvent("text", "已完成写入")],
+        [StreamEvent("tool_call", tool_call=ToolCall("1", "write_file", {"path": "existing.txt", "content": "new"}))],
+        [StreamEvent("tool_call", tool_call=ToolCall("2", "read_file", {"path": "existing.txt"}))],
+        [StreamEvent("tool_call", tool_call=ToolCall("3", "write_file", {"path": "existing.txt", "content": "new"}))],
+        [StreamEvent("tool_call", tool_call=ToolCall("4", "read_file", {"path": "existing.txt"}))],
+        [StreamEvent("text", "已补读、覆盖并验证")],
     ])
     agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
+    agent.permissions.set_mode(PermissionMode.ACCEPT_EDITS)
 
-    events = collect(agent, "解释这段代码的作用")
+    events = collect(agent, "把 existing.txt 完整覆盖为 new 并验证")
 
-    result = next(event.result for event in events if isinstance(event, ToolResultReady))
-    assert result.error_code == "policy_violation"
-    assert not (tmp_path / "blocked.txt").exists()
-    assert finished(events).reason is StopReason.POLICY_VIOLATION
-    assert "已完成写入" not in finished(events).text
+    results = [event.result for event in events if isinstance(event, ToolResultReady)]
+    assert results[0].error_code == "workflow_precondition"
+    assert [result.success for result in results[1:]] == [True, True, True]
+    assert path.read_text(encoding="utf-8") == "new"
+    assert len(provider.requests) == 5
+    assert finished(events).reason is StopReason.COMPLETED
 
 
 def test_edit_requires_read_and_post_edit_verification_before_visible_completion(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from mewcode.config import ConfigError, load_config
+from mewcode.permissions import PermissionMode
 
 
 def write_config(tmp_path: Path, content: str) -> Path:
@@ -40,6 +41,20 @@ def test_loads_agent_iteration_override(tmp_path: Path) -> None:
     assert load_config(path).agent.max_iterations == 3
 
 
+@pytest.mark.parametrize("mode", [item.value for item in PermissionMode])
+def test_loads_each_permission_mode(tmp_path: Path, mode: str) -> None:
+    path = write_config(
+        tmp_path,
+        f"protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\npermissions:\n  mode: {mode}\n",
+    )
+    assert load_config(path).permissions.mode.value == mode
+
+
+def test_defaults_permission_mode_to_default(tmp_path: Path) -> None:
+    path = write_config(tmp_path, "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\n")
+    assert load_config(path).permissions.mode is PermissionMode.DEFAULT
+
+
 @pytest.mark.parametrize(
     ("content", "message"),
     [
@@ -50,6 +65,7 @@ def test_loads_agent_iteration_override(tmp_path: Path) -> None:
         ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: secret\nagent: []", "agent"),
         ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: secret\nagent:\n  max_iterations: 0", "max_iterations"),
         ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: secret\nagent:\n  max_iterations: true", "max_iterations"),
+        ("protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: secret\npermissions:\n  mode: unsafe", "permissions.mode"),
     ],
 )
 def test_rejects_invalid_config_without_leaking_key(

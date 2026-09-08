@@ -3,12 +3,16 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from mewcode.cancellation import Cancellation
+from mewcode.permissions import ApprovalChoice, PermissionManager, PermissionMode, TaskAuthorization
 from mewcode.tools.base import ToolCall, ToolContext, ToolDefinition, ToolResult, ToolSafety
 from mewcode.tools.command import RunCommandTool
 from mewcode.tools.executor import ToolExecutor
 from mewcode.tools.filesystem import EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool
 from mewcode.tools.registry import ToolRegistry
+from mewcode.workflow import ToolWorkflow
 
 
 def context(tmp_path: Path) -> ToolContext:
@@ -41,6 +45,51 @@ def test_file_tools_reject_workspace_escape_and_binary(tmp_path: Path) -> None:
     assert result.error_code == "path_outside_workspace"
     (tmp_path / "binary.bin").write_bytes(b"a\0b")
     assert run_tool(ReadFileTool(), {"path": "binary.bin"}, tmp_path, "2").error_code == "binary_file"
+
+
+def test_utf16_text_can_be_read_then_safely_overwritten(tmp_path: Path) -> None:
+    path = tmp_path / "hello.txt"
+    path.write_bytes("1\r\n".encode("utf-16"))
+    registry = ToolRegistry(tmp_path)
+    executor = ToolExecutor(
+        registry,
+        PermissionManager(tmp_path, PermissionMode.ACCEPT_EDITS),
+    )
+    workflow = ToolWorkflow(tmp_path)
+
+    async def overwrite() -> tuple[ToolResult, ToolResult]:
+        read = await executor.execute(
+            ToolCall("read", "read_file", {"file_path": "hello.txt"}),
+            Cancellation(),
+            TaskAuthorization.EXECUTE,
+            workflow,
+        )
+        write = await executor.execute(
+            ToolCall("write", "write_file", {"path": "hello.txt", "content": "2"}),
+            Cancellation(),
+            TaskAuthorization.EXECUTE,
+            workflow,
+        )
+        return read, write
+
+    read, write = asyncio.run(overwrite())
+
+    assert read.success and read.content == "1\r\n"
+    assert write.success
+    assert path.read_text(encoding="utf-8") == "2"
+
+
+def test_file_tools_reject_symlink_escape_and_parent_glob(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside-link-target.txt"
+    outside.write_text("secret", encoding="utf-8")
+    link = tmp_path / "outside-link.txt"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("当前环境不允许创建符号链接")
+
+    assert run_tool(ReadFileTool(), {"path": "outside-link.txt"}, tmp_path).error_code == "path_outside_workspace"
+    assert run_tool(FindFilesTool(), {"pattern": "../*.txt"}, tmp_path).error_code == "invalid_pattern"
 
 
 def test_read_file_requires_nonempty_path_and_explains_correction(tmp_path: Path) -> None:
@@ -81,15 +130,39 @@ def test_registry_registers_and_filters_tools_by_safety(tmp_path: Path) -> None:
 
 
 def test_executor_handles_async_command_rejection(tmp_path: Path) -> None:
-    async def reject(_: ToolCall) -> bool:
-        return False
+    async def reject(_) -> ApprovalChoice:
+        return ApprovalChoice.REJECT
 
     result = asyncio.run(
         ToolExecutor(ToolRegistry(tmp_path)).execute(
-            ToolCall("1", "run_command", {"command": "Get-Location"}), Cancellation(), reject
+            ToolCall("1", "run_command", {"command": "Get-Location"}),
+            Cancellation(),
+            TaskAuthorization.EXECUTE,
+            ToolWorkflow(tmp_path),
+            reject,
         )
     )
-    assert result.error_code == "user_rejected"
+    assert result.error_code == "permission_rejected"
+
+
+def test_executor_never_starts_dangerous_call_even_in_bypass_mode(tmp_path: Path) -> None:
+    class ProbeTool:
+        safety = ToolSafety.SIDE_EFFECT
+        definition = ToolDefinition("run_command", "probe", {"type": "object"})
+
+        async def execute(self, *_args):
+            raise AssertionError("危险命令不应进入真实工具")
+
+    registry = ToolRegistry(tmp_path, (ProbeTool(),))
+    result = asyncio.run(
+        ToolExecutor(registry, PermissionManager(tmp_path, PermissionMode.BYPASS_PERMISSIONS)).execute(
+            ToolCall("1", "run_command", {"command": "git reset --hard"}),
+            Cancellation(),
+            TaskAuthorization.EXECUTE,
+            ToolWorkflow(tmp_path),
+        )
+    )
+    assert result.error_code == "dangerous_command"
 
 
 def test_command_collects_output_and_nonzero_exit(tmp_path: Path) -> None:
@@ -153,7 +226,13 @@ def test_executor_batches_reads_and_preserves_barriers_and_result_order(tmp_path
             FakeTool("read_d", ToolSafety.READ_ONLY),
         )
         calls = [ToolCall(str(i), tool.definition.name, {}) for i, tool in enumerate(tools)]
-        results = await ToolExecutor(ToolRegistry(tmp_path, tools)).execute_many(calls, Cancellation())
+        manager = PermissionManager(tmp_path, PermissionMode.BYPASS_PERMISSIONS)
+        results = await ToolExecutor(ToolRegistry(tmp_path, tools), manager).execute_many(
+            calls,
+            Cancellation(),
+            TaskAuthorization.EXECUTE,
+            ToolWorkflow(tmp_path),
+        )
         return events, results
 
     events, results = asyncio.run(scenario())
@@ -184,7 +263,13 @@ def test_executor_does_not_start_later_batch_after_cancel(tmp_path: Path) -> Non
 
         registry = ToolRegistry(tmp_path, (CancellingTool(), LaterTool()))
         calls = [ToolCall("1", "cancel_now", {}), ToolCall("2", "later", {})]
-        return await ToolExecutor(registry).execute_many(calls, cancellation)
+        manager = PermissionManager(tmp_path, PermissionMode.BYPASS_PERMISSIONS)
+        return await ToolExecutor(registry, manager).execute_many(
+            calls,
+            cancellation,
+            TaskAuthorization.EXECUTE,
+            ToolWorkflow(tmp_path),
+        )
 
     results = asyncio.run(scenario())
     assert [result.error_code for result in results] == ["cancelled", "cancelled"]

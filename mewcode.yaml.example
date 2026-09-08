@@ -6,6 +6,11 @@ api_key: your-api-key
 thinking:
   enabled: true
 
+# 权限模式：default（未命中副作用请求确认）、acceptEdits（自动接受项目内编辑）、
+# plan（只读）或 bypassPermissions（跳过未命中确认）。Shift+Tab 可在会话中切换。
+permissions:
+  mode: default
+
 # OpenAI 示例：
 # protocol: openai
 # model: gpt-5

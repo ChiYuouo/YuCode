@@ -1,0 +1,8 @@
+# 可提交的项目共享权限规则。规则工具名使用 MewCode 的规范工具名。
+rules:
+  - rule: "run_command(git *)"
+    action: allow
+  - rule: "write_file(.env)"
+    action: deny
+  - rule: "edit_file(src/**/*.py)"
+    action: allow

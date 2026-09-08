@@ -9,6 +9,7 @@ from rich.console import Console
 from mewcode.agent import Agent
 from mewcode.config import ConfigError, ProviderConfig, load_config
 from mewcode.conversation import Conversation
+from mewcode.permissions import PermissionManager
 from mewcode.providers.anthropic import AnthropicProvider
 from mewcode.providers.base import Provider
 from mewcode.providers.openai import OpenAIProvider
@@ -26,11 +27,13 @@ def main() -> None:
         return
 
     registry = ToolRegistry(Path.cwd())
+    permissions = PermissionManager(registry.context.root, config.permissions.mode)
     agent = Agent(
         create_provider(config.provider),
         Conversation(),
         registry,
         config.agent.max_iterations,
+        permissions=permissions,
     )
     ChatApp(agent, config.provider).run()
 

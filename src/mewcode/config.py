@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 import yaml
 
+from mewcode.permissions import PermissionMode
+
 
 class ConfigError(ValueError):
     """配置文件无法安全使用时抛出。"""
@@ -33,11 +35,19 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class PermissionConfig:
+    """启动时使用的权限模式。"""
+
+    mode: PermissionMode = PermissionMode.DEFAULT
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """MewCode 的完整应用配置。"""
 
     provider: ProviderConfig
     agent: AgentConfig = AgentConfig()
+    permissions: PermissionConfig = PermissionConfig()
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -66,6 +76,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     api_key = _required_text(raw, "api_key")
     thinking_enabled = _parse_thinking(raw.get("thinking"))
     agent = _parse_agent(raw.get("agent"))
+    permissions = _parse_permissions(raw.get("permissions"))
 
     if protocol == "openai" and thinking_enabled:
         raise ConfigError("thinking.enabled 仅支持 anthropic 协议。")
@@ -79,6 +90,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             thinking_enabled=thinking_enabled,
         ),
         agent=agent,
+        permissions=permissions,
     )
 
 
@@ -115,3 +127,18 @@ def _parse_agent(value: Any) -> AgentConfig:
     if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
         raise ConfigError("agent.max_iterations 必须是正整数。")
     return AgentConfig(max_iterations=max_iterations)
+
+
+def _parse_permissions(value: Any) -> PermissionConfig:
+    if value is None:
+        return PermissionConfig()
+    if not isinstance(value, Mapping):
+        raise ConfigError("permissions 必须是包含 mode 的键值对象。")
+    mode = value.get("mode", PermissionMode.DEFAULT.value)
+    if not isinstance(mode, str):
+        raise ConfigError("permissions.mode 必须是字符串。")
+    try:
+        return PermissionConfig(PermissionMode(mode))
+    except ValueError as error:
+        values = ", ".join(item.value for item in PermissionMode)
+        raise ConfigError(f"permissions.mode 只能是 {values}。") from error

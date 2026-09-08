@@ -19,13 +19,43 @@ MAX_MATCHES = 200
 SKIPPED_DIRECTORIES = {".git", ".venv", "__pycache__", ".pytest_cache", "dist"}
 
 
+class WorkspacePathError(ValueError):
+    """路径无法被安全地限制在工作目录中。"""
+
+
+class _BinaryContentError(ValueError):
+    """文件包含不应作为文本展示的二进制内容。"""
+
+
+def resolve_workspace_path(root: Path, value: str) -> Path:
+    """解析已有符号链接后，返回工作目录内的规范路径。"""
+    if not isinstance(value, str) or not value.strip():
+        raise WorkspacePathError("路径必须是非空字符串。")
+    try:
+        resolved_root = root.resolve(strict=True)
+        candidate = (resolved_root / value).resolve(strict=False)
+        candidate.relative_to(resolved_root)
+        return candidate
+    except (OSError, ValueError) as error:
+        raise WorkspacePathError("路径超出工作目录范围。") from error
+
+
+def validate_workspace_glob(pattern: str) -> None:
+    """拒绝可在枚举前离开工作目录的 glob 模式。"""
+    if not isinstance(pattern, str) or not pattern:
+        raise WorkspacePathError("查找模式必须是非空字符串。")
+    candidate = Path(pattern)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise WorkspacePathError("查找路径超出工作目录范围。")
+
+
 class ReadFileTool:
     safety = ToolSafety.READ_ONLY
 
     @property
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
-            "read_file", "读取工作目录内的 UTF-8 文本文件。调用时必须提供非空 file_path，例如 {\"file_path\": \"note.txt\"}。",
+            "read_file", "读取工作目录内的 UTF-8 或带 BOM 的 UTF-16 文本文件。调用时必须提供非空 file_path，例如 {\"file_path\": \"note.txt\"}。",
             _schema(
                 {"file_path": _string("必须是非空的工作目录相对文件路径，例如 note.txt", min_length=1)},
                 ["file_path"],
@@ -48,10 +78,9 @@ class ReadFileTool:
             size = path.stat().st_size
             if size > MAX_READ_BYTES:
                 return _failure(call_id, self.definition.name, "文件超过 1 MiB 读取上限。", "file_too_large")
-            raw = path.read_bytes()
-            if b"\0" in raw:
-                return _failure(call_id, self.definition.name, "不支持读取二进制文件。", "binary_file")
-            content = raw.decode("utf-8")
+            content = _decode_text(path.read_bytes())
+        except _BinaryContentError:
+            return _failure(call_id, self.definition.name, "不支持读取二进制文件。", "binary_file")
         except UnicodeDecodeError:
             return _failure(call_id, self.definition.name, "文件不是 UTF-8 文本。", "non_utf8_file")
         except OSError as error:
@@ -135,7 +164,9 @@ class EditFileTool:
                 return _failure(call_id, self.definition.name, "文件不存在或不是普通文件。", "not_found")
             if path.stat().st_size > MAX_READ_BYTES:
                 return _failure(call_id, self.definition.name, "文件超过 1 MiB 修改上限。", "file_too_large")
-            original = path.read_text(encoding="utf-8")
+            original = _decode_text(path.read_bytes())
+        except _BinaryContentError:
+            return _failure(call_id, self.definition.name, "不支持修改二进制文件。", "binary_file")
         except UnicodeDecodeError:
             return _failure(call_id, self.definition.name, "文件不是 UTF-8 文本。", "non_utf8_file")
         except OSError as error:
@@ -172,6 +203,7 @@ class FindFilesTool:
         if not isinstance(pattern, str) or not pattern:
             return _failure(call_id, self.definition.name, "参数 pattern 必须是非空字符串。", "invalid_arguments")
         try:
+            validate_workspace_glob(pattern)
             matches = [
                 path
                 for path in context.root.glob(pattern)
@@ -272,11 +304,8 @@ def _path_argument(arguments: Mapping[str, Any], context: ToolContext, call_id: 
             hint += " 请重新调用 read_file，并传入工作目录相对路径，例如 {\"file_path\": \"note.txt\"}。"
         return _failure(call_id, name, hint, "invalid_arguments")
     try:
-        root = context.root.resolve(strict=True)
-        candidate = (root / value).resolve(strict=False)
-        candidate.relative_to(root)
-        return candidate
-    except (OSError, ValueError):
+        return resolve_workspace_path(context.root, value)
+    except WorkspacePathError:
         return _failure(call_id, name, "路径超出工作目录范围。", "path_outside_workspace")
 
 
@@ -289,6 +318,15 @@ def _atomic_write(path: Path, content: str) -> None:
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+def _decode_text(raw: bytes) -> str:
+    """读取 UTF-8 与带 BOM 的 UTF-16 文本，其他含 NUL 数据仍视为二进制。"""
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16")
+    if b"\0" in raw:
+        raise _BinaryContentError()
+    return raw.decode("utf-8-sig")
 
 
 def _truncate(content: str) -> tuple[str, bool]:
