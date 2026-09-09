@@ -10,7 +10,9 @@ from yucode.permissions import ApprovalChoice, PermissionManager, PermissionMode
 from yucode.tools.base import ToolCall, ToolContext, ToolDefinition, ToolResult, ToolSafety
 from yucode.tools.command import RunCommandTool
 from yucode.tools.executor import ToolExecutor
-from yucode.tools.filesystem import EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool
+from yucode.tools.filesystem import (
+    MAX_MATCHES, MAX_READ_BYTES, EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool,
+)
 from yucode.tools.registry import ToolRegistry
 from yucode.workflow import ToolWorkflow
 
@@ -45,6 +47,26 @@ def test_file_tools_reject_workspace_escape_and_binary(tmp_path: Path) -> None:
     assert result.error_code == "path_outside_workspace"
     (tmp_path / "binary.bin").write_bytes(b"a\0b")
     assert run_tool(ReadFileTool(), {"path": "binary.bin"}, tmp_path, "2").error_code == "binary_file"
+
+
+def test_read_file_keeps_full_large_text_below_byte_limit(tmp_path: Path) -> None:
+    content = "文件内容-" * 10_001
+    path = tmp_path / "large.txt"
+    path.write_text(content, encoding="utf-8")
+
+    result = run_tool(ReadFileTool(), {"file_path": path.name}, tmp_path)
+
+    assert result.success
+    assert result.content == content
+    assert "截断" not in result.summary
+
+
+def test_read_file_still_rejects_file_over_one_mib(tmp_path: Path) -> None:
+    (tmp_path / "too-large.txt").write_bytes(b"x" * (MAX_READ_BYTES + 1))
+
+    result = run_tool(ReadFileTool(), {"file_path": "too-large.txt"}, tmp_path)
+
+    assert result.error_code == "file_too_large"
 
 
 def test_utf16_text_can_be_read_then_safely_overwritten(tmp_path: Path) -> None:
@@ -114,6 +136,35 @@ def test_find_and_search_skip_generated_directories(tmp_path: Path) -> None:
     assert "hidden.py" not in searched.content
 
 
+def test_find_and_search_keep_full_results_below_match_limit(tmp_path: Path) -> None:
+    for index in range(150):
+        path = tmp_path / f"result_{index:03d}_{'x' * 75}.txt"
+        path.write_text(f"needle {'y' * 15_000}\n", encoding="utf-8")
+
+    found = run_tool(FindFilesTool(), {"pattern": "*.txt"}, tmp_path, "1")
+    searched = run_tool(SearchCodeTool(), {"pattern": "needle", "path": "result_000_" + "x" * 75 + ".txt"}, tmp_path, "2")
+
+    assert len(found.content) > 12_000
+    assert len(found.content.splitlines()) == 150
+    assert "截断" not in found.summary
+    assert len(searched.content) > 12_000
+    assert searched.content.endswith("y" * 15_000)
+    assert "截断" not in searched.summary
+
+
+def test_find_and_search_stop_at_match_limit(tmp_path: Path) -> None:
+    for index in range(MAX_MATCHES + 1):
+        (tmp_path / f"match-{index:03d}.txt").write_text("needle\n", encoding="utf-8")
+
+    found = run_tool(FindFilesTool(), {"pattern": "match-*.txt"}, tmp_path, "1")
+    searched = run_tool(SearchCodeTool(), {"pattern": "needle"}, tmp_path, "2")
+
+    assert len(found.content.splitlines()) == MAX_MATCHES
+    assert f"{MAX_MATCHES} 个上限" in found.summary
+    assert len(searched.content.splitlines()) == MAX_MATCHES
+    assert f"{MAX_MATCHES} 条上限" in searched.summary
+
+
 def test_search_reports_invalid_regex(tmp_path: Path) -> None:
     result = run_tool(SearchCodeTool(), {"pattern": "["}, tmp_path)
     assert result.error_code == "invalid_pattern"
@@ -170,6 +221,21 @@ def test_command_collects_output_and_nonzero_exit(tmp_path: Path) -> None:
     failed = run_tool(RunCommandTool(), {"command": "Write-Error bad; exit 7"}, tmp_path, "2")
     assert ok.success and "hello" in ok.content
     assert failed.error_code == "nonzero_exit"
+
+
+def test_command_keeps_full_large_output_for_success_and_failure(tmp_path: Path) -> None:
+    success = run_tool(RunCommandTool(), {"command": "[Console]::Out.Write(('x' * 60000))"}, tmp_path, "1")
+    failure = run_tool(
+        RunCommandTool(),
+        {"command": "[Console]::Error.Write(('y' * 60000)); exit 7"},
+        tmp_path,
+        "2",
+    )
+
+    assert success.success and success.content == "x" * 60_000
+    assert failure.error_code == "nonzero_exit" and "y" * 60_000 in failure.content
+    assert "截断" not in success.summary
+    assert "截断" not in failure.summary
 
 
 def test_command_timeout_is_structured(tmp_path: Path, monkeypatch) -> None:

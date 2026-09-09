@@ -14,7 +14,6 @@ from yucode.cancellation import Cancellation
 from yucode.tools.base import ToolContext, ToolDefinition, ToolResult, ToolSafety
 
 MAX_READ_BYTES = 1_048_576
-MAX_RESULT_CHARS = 12_000
 MAX_MATCHES = 200
 SKIPPED_DIRECTORIES = {".git", ".venv", "__pycache__", ".pytest_cache", "dist"}
 
@@ -85,10 +84,7 @@ class ReadFileTool:
             return _failure(call_id, self.definition.name, "文件不是 UTF-8 文本。", "non_utf8_file")
         except OSError as error:
             return _failure(call_id, self.definition.name, f"无法读取文件：{error}", "read_error")
-        content, truncated = _truncate(content)
         summary = f"已读取 {_relative(path, context.root)}。"
-        if truncated:
-            summary += " 内容已截断。"
         return ToolResult(call_id, self.definition.name, True, summary, content, target=_relative(path, context.root))
 
 
@@ -204,17 +200,21 @@ class FindFilesTool:
             return _failure(call_id, self.definition.name, "参数 pattern 必须是非空字符串。", "invalid_arguments")
         try:
             validate_workspace_glob(pattern)
-            matches = [
-                path
-                for path in context.root.glob(pattern)
-                if _is_workspace_file(path, context.root) and not _is_skipped(path, context.root)
-            ]
+            matches: list[Path] = []
+            limit_reached = False
+            for path in context.root.glob(pattern):
+                if not _is_workspace_file(path, context.root) or _is_skipped(path, context.root):
+                    continue
+                matches.append(path)
+                if len(matches) >= MAX_MATCHES:
+                    limit_reached = True
+                    break
         except (OSError, ValueError) as error:
             return _failure(call_id, self.definition.name, f"无效的查找模式：{error}", "invalid_pattern")
-        content, truncated = _joined_paths(matches, context.root)
-        summary = f"找到 {min(len(matches), MAX_MATCHES)} 个文件。"
-        if truncated:
-            summary += " 结果已截断。"
+        content = _joined_paths(matches, context.root)
+        summary = f"找到 {len(matches)} 个文件。"
+        if limit_reached:
+            summary += f" 结果达到 {MAX_MATCHES} 个上限。"
         return ToolResult(call_id, self.definition.name, True, summary, content, target=pattern)
 
 
@@ -273,11 +273,11 @@ class SearchCodeTool:
                     matches.append(f"{_relative(path, context.root)}:{line_number}: {line}")
                     if len(matches) >= MAX_MATCHES:
                         break
-        content, truncated = _truncate("\n".join(matches))
+        content = "\n".join(matches)
         limit_reached = len(matches) >= MAX_MATCHES
         summary = f"找到 {len(matches)} 处匹配。"
-        if truncated or limit_reached:
-            summary += " 结果已截断。"
+        if limit_reached:
+            summary += f" 结果达到 {MAX_MATCHES} 条上限。"
         return ToolResult(call_id, self.definition.name, True, summary, content, target=pattern)
 
 
@@ -329,16 +329,8 @@ def _decode_text(raw: bytes) -> str:
     return raw.decode("utf-8-sig")
 
 
-def _truncate(content: str) -> tuple[str, bool]:
-    if len(content) <= MAX_RESULT_CHARS:
-        return content, False
-    return content[:MAX_RESULT_CHARS] + "\n…（结果已截断）", True
-
-
-def _joined_paths(paths: list[Path], root: Path) -> tuple[str, bool]:
-    selected = paths[:MAX_MATCHES]
-    content, output_truncated = _truncate("\n".join(_relative(path, root) for path in selected))
-    return content, len(paths) > MAX_MATCHES or output_truncated
+def _joined_paths(paths: list[Path], root: Path) -> str:
+    return "\n".join(_relative(path, root) for path in paths)
 
 
 def _relative(path: Path, root: Path) -> str:

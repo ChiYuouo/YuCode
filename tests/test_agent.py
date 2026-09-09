@@ -11,7 +11,7 @@ from yucode.agent import (
 from yucode.cancellation import Cancellation
 from yucode.conversation import Conversation
 from yucode.permissions import ApprovalChoice, PermissionMode
-from yucode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
+from yucode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, ToolResultContent, Usage
 from yucode.tools.base import ToolCall
 from yucode.tools.registry import ToolRegistry
 
@@ -70,6 +70,51 @@ def test_runs_multiple_tool_rounds_without_user_prompting(tmp_path: Path) -> Non
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "ok"
     assert [event.result.call_id for event in events if isinstance(event, ToolResultReady)] == ["1", "2"]
     assert finished(events).usage == Usage(6, 4, 0)
+
+
+def test_large_builtin_result_is_externalized_before_next_model_request(tmp_path: Path) -> None:
+    content = "完整工具结果-" * 10_001
+    (tmp_path / "large.txt").write_text(content, encoding="utf-8")
+    provider = FakeProvider([
+        [StreamEvent("tool_call", tool_call=ToolCall("1", "read_file", {"file_path": "large.txt"}))],
+        [StreamEvent("text", "已继续处理")],
+    ])
+    agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
+
+    events = collect(agent, "读取 large.txt 后继续")
+
+    cache = tmp_path / ".yucode" / "context" / "tool-result-0001.txt"
+    result_event = next(event for event in events if isinstance(event, ToolResultReady))
+    assert result_event.result.content == content
+    assert cache.read_text(encoding="utf-8") == content
+    assert any(
+        event.result.status == "offloaded" and event.result.offloaded_count == 1
+        for event in events if isinstance(event, ContextUpdated)
+    )
+    history = provider.requests[1].history
+    stored = next(
+        block.result
+        for message in history
+        for block in message.blocks
+        if isinstance(block, ToolResultContent)
+    )
+    assert ".yucode/context/tool-result-0001.txt" in stored.content
+    assert content not in stored.content
+
+
+def test_small_builtin_result_stays_in_next_model_request_history(tmp_path: Path) -> None:
+    content = "未外置结果-" * 3_000
+    (tmp_path / "small.txt").write_text(content, encoding="utf-8")
+    provider = FakeProvider([
+        [StreamEvent("tool_call", tool_call=ToolCall("1", "read_file", {"file_path": "small.txt"}))],
+        [StreamEvent("text", "已继续处理")],
+    ])
+    agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
+
+    events = collect(agent, "读取 small.txt 后继续")
+
+    assert not any(event.result.status == "offloaded" for event in events if isinstance(event, ContextUpdated))
+    assert content in str(provider.requests[1].history)
 
 
 def test_permission_denial_returns_to_model_and_allows_safe_recovery(tmp_path: Path) -> None:

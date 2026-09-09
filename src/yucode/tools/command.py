@@ -9,7 +9,6 @@ from typing import Any
 
 from yucode.cancellation import Cancellation
 from yucode.tools.base import ToolContext, ToolDefinition, ToolResult, ToolSafety
-from yucode.tools.filesystem import MAX_RESULT_CHARS
 
 COMMAND_TIMEOUT_SECONDS = 30
 
@@ -78,17 +77,10 @@ class RunCommandTool:
             await cancel_wait
         stdout, stderr = communicate.result()
         output = b"".join(part for part in (stdout, stderr) if part).decode("utf-8", errors="replace")
-        truncated = len(output) > MAX_RESULT_CHARS
-        if truncated:
-            output = output[:MAX_RESULT_CHARS] + "\n…（输出已截断）"
         if process.returncode == 0:
             summary = "命令执行成功。"
-            if truncated:
-                summary += " 输出已截断。"
             return ToolResult(call_id, self.definition.name, True, summary, output, target=command)
         summary = f"命令以退出码 {process.returncode} 结束。"
-        if truncated:
-            summary += " 输出已截断。"
         return ToolResult(call_id, self.definition.name, False, summary, output, "nonzero_exit", command)
 
 
