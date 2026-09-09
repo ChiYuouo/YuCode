@@ -87,6 +87,6 @@ def test_strict_rules_and_runtime_authorization_use_unambiguous_language() -> No
     assert "必须使用它" in request.stable_instructions
     assert "必须用适用只读工具验证" in request.stable_instructions
     reminder = request.runtime_messages[0].content
-    assert "仅回答" in reminder
+    assert "回答优先" in reminder
     assert "待验证目标：a.txt" in reminder
     assert "违反授权或流程被拒绝" in reminder

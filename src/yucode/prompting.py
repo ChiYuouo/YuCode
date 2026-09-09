@@ -165,9 +165,9 @@ class SystemPromptBuilder:
         workspace = context.workspace_root.resolve().as_posix()
         authorization = {
             "execute": "允许执行：用户已明确授权副作用，但仍必须遵守工具前置条件和验证要求。",
-            "answer_only": "仅回答：用户未授权任何副作用；不得写文件、编辑文件或执行命令。",
-            "read_only": "只读：用户授权不足以决定副作用；最多使用只读工具，仍无法判断时说明需要用户明确选择。",
-        }.get(context.authorization, "只读：不得产生副作用。")
+            "answer_only": "回答优先：如确有必要可请求工具；副作用工具会在实际执行前由界面向用户确认。",
+            "read_only": "查询优先：如确有必要可请求工具；副作用工具会在实际执行前由界面向用户确认。",
+        }.get(context.authorization, "需要副作用时由界面向用户确认。")
         verification = (
             f"待验证目标：{', '.join(context.pending_verifications)}。必须读取这些目标后才能报告任务完成。"
             if context.pending_verifications

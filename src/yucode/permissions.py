@@ -277,16 +277,6 @@ class PermissionManager:
         if path_error is not None:
             return _deny(path_error, "path_outside_workspace")
 
-        if (
-            tool.safety is ToolSafety.SIDE_EFFECT
-            and self._mode is not PermissionMode.PLAN
-            and authorization is not TaskAuthorization.EXECUTE
-        ):
-            return _deny(
-                "当前用户请求未明确授权副作用操作；只能回答或使用只读工具，请说明需要执行的具体操作。",
-                "task_not_authorized",
-            )
-
         subject = _subject(call, self.root)
         matched = self._match_rules(call.name, subject)
         if matched is not None and matched.outcome is PermissionOutcome.DENY:

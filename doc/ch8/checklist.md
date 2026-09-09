@@ -21,7 +21,7 @@
 - [ ] AC6 / N4：单个启动失败不影响其他 Server（验证：运行 uv run pytest tests/test_mcp_manager.py tests/test_tui.py -k "failure or warning"；期望中文警告包含失败 Server 与原因，其他 Server 工具和内置工具仍可用）。
 - [ ] AC7 / N3：单次远端工具失败不影响后续调用（验证：运行 uv run pytest tests/test_mcp_manager.py tests/test_tools.py -k "error or isolation"；期望该次返回失败 ToolResult，内置工具与另一 Server 后续调用成功）。
 - [ ] AC8：每次 MCP 初始化和工具调用固定 30 秒上限（验证：运行 uv run pytest tests/test_mcp_session.py -k timeout；期望测试替换等待常量后得到 timeout 错误码，生产常量断言为 30 秒，且无重试或自动重连）。
-- [ ] AC9 / N3：MCP 工具沿用默认权限与会话确认（验证：运行 uv run pytest tests/test_tools.py tests/test_tui.py -k "mcp and permission"；期望未明确执行授权时拒绝，明确授权后显示确认卡片，选择“本会话允许”后同一调用在本会话可继续执行）。
+- [x] AC9 / N3：MCP 工具沿用默认权限与会话确认（验证：运行 uv run pytest tests/test_permissions.py tests/test_tools.py tests/test_tui.py -k "permission or mcp"；期望“查看文档”等只读表达也在 default 模式显示确认卡片，选择“本会话允许”后同一调用在本会话可继续执行，bypassPermissions 直接执行）。
 - [ ] N2：新增用户提示和配置说明使用清晰中文（验证：运行 rg -n "MCP|服务器|超时|确认" src/yucode yucode.yaml.example README.md；期望新增面向用户文案均为清晰中文，无占位文本）。
 
 ## 集成、回归与说明
@@ -43,4 +43,4 @@
 
 | 日期 | 执行人 | 通过项 | 实际命令或场景 | 结果摘要 |
 |---|---|---|---|---|
-| 2026-09-09 | Codex | 自动化与编译 3/3 | uv run pytest；uv run python -m compileall -q src | 133 通过，2 跳过；编译成功。 |
+| 2026-09-09 | Codex | 自动化与编译 4/4 | uv run pytest；uv run python -m compileall -q src | 134 通过，2 跳过；编译成功；权限矩阵通过。 |

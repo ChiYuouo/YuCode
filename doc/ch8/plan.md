@@ -98,7 +98,7 @@ HTTP 行为：每条 JSON-RPC 消息以 HTTP POST 发送，携带 Accept: applic
 
 职责：将远端 name、description、inputSchema 映射为 ToolDefinition，并转发执行。
 
-规则：远端返回 isError: true 或 JSON-RPC 错误时生成失败 ToolResult；文本内容合并为模型可读文本，其他 MCP 内容项以 JSON 形式保留。连接、协议、30 秒超时和取消异常都转换为带稳定错误码的失败结果，绝不从工具边界泄漏到 Agent。工具固定为 SIDE_EFFECT，因此现有默认授权判断、确认卡片及“本会话允许”规则无需分支即可复用。
+规则：远端返回 isError: true 或 JSON-RPC 错误时生成失败 ToolResult；文本内容合并为模型可读文本，其他 MCP 内容项以 JSON 形式保留。连接、协议、30 秒超时和取消异常都转换为带稳定错误码的失败结果，绝不从工具边界泄漏到 Agent。工具固定为 SIDE_EFFECT，因此未命中规则时会在 default 模式直接进入确认卡片及“本会话允许”规则，不依赖用户文案中的执行关键词。
 
 ### yucode.mcp.manager
 

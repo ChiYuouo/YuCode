@@ -222,15 +222,12 @@ def test_agent_keeps_runtime_messages_out_of_history_and_accumulates_cache(tmp_p
     assert finished(events).usage.cache == CacheUsage(True, 5, 1)
 
 
-def test_explanation_request_rejects_write_in_all_do_modes(tmp_path: Path) -> None:
-    for mode in (
-        PermissionMode.DEFAULT,
-        PermissionMode.ACCEPT_EDITS,
-        PermissionMode.BYPASS_PERMISSIONS,
-    ):
+def test_explanation_request_uses_mode_permission_behavior(tmp_path: Path) -> None:
+    for mode in (PermissionMode.DEFAULT, PermissionMode.ACCEPT_EDITS, PermissionMode.BYPASS_PERMISSIONS):
         target = tmp_path / f"blocked-{mode.value}.txt"
         provider = FakeProvider([
             [StreamEvent("tool_call", tool_call=ToolCall("1", "write_file", {"path": target.name, "content": "x"}))],
+            [StreamEvent("tool_call", tool_call=ToolCall("2", "read_file", {"file_path": target.name}))],
             [StreamEvent("text", "未获得授权，未写入文件")],
         ])
         agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
@@ -239,8 +236,8 @@ def test_explanation_request_rejects_write_in_all_do_modes(tmp_path: Path) -> No
         events = collect(agent, "解释这段代码的作用")
 
         result = next(event.result for event in events if isinstance(event, ToolResultReady))
-        assert result.error_code == "task_not_authorized"
-        assert not target.exists()
+        assert result.success
+        assert target.read_text(encoding="utf-8") == "x"
         assert finished(events).reason is StopReason.COMPLETED
         assert "未写入文件" in finished(events).text
 

@@ -147,6 +147,14 @@ def test_modes_only_change_unmatched_side_effects(tmp_path: Path) -> None:
     assert evaluate(plan_with_allow, call("write_file", "a.txt"), write).error_code == "permission_plan"
 
 
+def test_default_asks_and_bypass_allows_even_when_request_is_read_only(tmp_path: Path) -> None:
+    external = FakeTool("MCP__context7__resolve_library_id")
+    target = call("MCP__context7__resolve_library_id", "eino")
+    assert evaluate(manager(tmp_path, PermissionMode.DEFAULT), target, external, TaskAuthorization.READ_ONLY).outcome is PermissionOutcome.ASK
+    assert evaluate(manager(tmp_path, PermissionMode.BYPASS_PERMISSIONS), target, external, TaskAuthorization.READ_ONLY).outcome is PermissionOutcome.ALLOW
+    assert evaluate(manager(tmp_path, PermissionMode.PLAN), target, external, TaskAuthorization.READ_ONLY).error_code == "permission_plan"
+
+
 def test_plan_restores_last_do_mode_or_default(tmp_path: Path) -> None:
     permissions = manager(tmp_path, PermissionMode.ACCEPT_EDITS)
     permissions.set_mode(PermissionMode.PLAN)
@@ -217,7 +225,7 @@ def test_unified_decision_distinguishes_intent_workflow_and_mode(tmp_path: Path)
     workflow = ToolWorkflow(tmp_path)
 
     no_intent = evaluate(accept, target, FakeTool("write_file"), TaskAuthorization.ANSWER_ONLY, workflow)
-    assert no_intent.error_code == "task_not_authorized"
+    assert no_intent.error_code == "workflow_precondition"
 
     missing_read = evaluate(accept, target, FakeTool("write_file"), TaskAuthorization.EXECUTE, workflow)
     assert missing_read.error_code == "workflow_precondition"
