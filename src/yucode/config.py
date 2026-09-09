@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import os
 from pathlib import Path
+import re
 from typing import Any, Literal, Mapping
 from urllib.parse import urlparse
 
@@ -42,12 +44,35 @@ class PermissionConfig:
 
 
 @dataclass(frozen=True)
+class MCPServerConfig:
+    """一个已校验且已展开环境变量的 MCP Server。"""
+
+    name: str
+    transport: Literal["stdio", "http"]
+    command: str | None = None
+    args: tuple[str, ...] = ()
+    env: Mapping[str, str] = field(default_factory=dict)
+    url: str | None = None
+    headers: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MCPConfigIssue:
+    """仅影响一个 MCP Server 的可展示配置问题。"""
+
+    server_name: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """YuCode 的完整应用配置。"""
 
     provider: ProviderConfig
     agent: AgentConfig = AgentConfig()
     permissions: PermissionConfig = PermissionConfig()
+    mcp_servers: tuple[MCPServerConfig, ...] = ()
+    mcp_issues: tuple[MCPConfigIssue, ...] = ()
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -81,6 +106,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     if protocol == "openai" and thinking_enabled:
         raise ConfigError("thinking.enabled 仅支持 anthropic 协议。")
 
+    servers, issues = _load_mcp_servers(raw, _load_user_raw(config_path))
     return AppConfig(
         provider=ProviderConfig(
             protocol=protocol,
@@ -91,7 +117,77 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         agent=agent,
         permissions=permissions,
+        mcp_servers=servers,
+        mcp_issues=issues,
     )
+
+
+def _load_user_raw(project_path: Path) -> Mapping[str, Any]:
+    """用户配置只为 MCP Server 提供可选的补充来源。"""
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return {}
+    user_path = Path(appdata) / "YuCode" / "yucode.yaml"
+    if user_path.resolve() == project_path.resolve() or not user_path.is_file():
+        return {}
+    try:
+        raw = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return {}
+    return raw if isinstance(raw, Mapping) else {}
+
+
+_ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _load_mcp_servers(project: Mapping[str, Any], user: Mapping[str, Any]) -> tuple[tuple[MCPServerConfig, ...], tuple[MCPConfigIssue, ...]]:
+    """合并两层声明；坏的单项以问题形式保留，不阻断启动。"""
+    merged: dict[str, Any] = {}
+    for source in (user, project):
+        raw = source.get("mcp_servers", {})
+        if isinstance(raw, Mapping):
+            merged.update(raw)
+    servers: list[MCPServerConfig] = []
+    issues: list[MCPConfigIssue] = []
+    for name, value in merged.items():
+        label = str(name)
+        try:
+            servers.append(_parse_mcp_server(label, value))
+        except ValueError as error:
+            issues.append(MCPConfigIssue(label, str(error)))
+    return tuple(servers), tuple(issues)
+
+
+def _parse_mcp_server(name: str, value: Any) -> MCPServerConfig:
+    if not name.strip() or not isinstance(value, Mapping):
+        raise ValueError("声明必须是包含 transport 的键值对象。")
+    transport = value.get("transport")
+    if transport == "stdio":
+        command = _required_text(value, "command")
+        args = _string_list(value.get("args", []), "args")
+        return MCPServerConfig(name, "stdio", command, args, _expanded_map(value.get("env", {}), "env"))
+    if transport == "http":
+        url = _required_text(value, "url").rstrip("/")
+        _validate_url(url)
+        return MCPServerConfig(name, "http", url=url, headers=_expanded_map(value.get("headers", {}), "headers"))
+    raise ValueError("transport 只能是 stdio 或 http。")
+
+
+def _string_list(value: Any, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{field} 必须是字符串列表。")
+    return tuple(value)
+
+
+def _expanded_map(value: Any, field: str) -> Mapping[str, str]:
+    if not isinstance(value, Mapping) or not all(isinstance(key, str) and isinstance(item, str) for key, item in value.items()):
+        raise ValueError(f"{field} 必须是字符串键值对象。")
+    def replace(match: re.Match[str]) -> str:
+        variable = match.group(1)
+        if variable not in os.environ:
+            raise ValueError(f"环境变量 {variable} 未定义。")
+        return os.environ[variable]
+    return {key: _ENV_REF.sub(replace, item) for key, item in value.items()}
 
 
 def _required_text(raw: Mapping[str, Any], field: str) -> str:

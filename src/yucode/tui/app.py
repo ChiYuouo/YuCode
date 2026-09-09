@@ -17,6 +17,7 @@ from yucode.agent import (
 )
 from yucode.cancellation import Cancellation
 from yucode.config import ProviderConfig
+from yucode.mcp.manager import MCPManager
 from yucode.permissions import ApprovalChoice, PermissionMode, PermissionRequest
 from yucode.providers.base import CacheUsage
 from yucode.tui.widgets import (
@@ -68,10 +69,11 @@ class ChatApp(App[None]):
         PermissionMode.BYPASS_PERMISSIONS,
     )
 
-    def __init__(self, agent: Agent, config: ProviderConfig) -> None:
+    def __init__(self, agent: Agent, config: ProviderConfig, mcp_manager: MCPManager | None = None) -> None:
         super().__init__()
         self._agent = agent
         self._config = config
+        self._mcp_manager = mcp_manager or getattr(agent, "mcp_manager", MCPManager())
         self._totals = TokenTotals()
         self._active_input_tokens = 0
         self._active_output_tokens = 0
@@ -98,9 +100,28 @@ class ChatApp(App[None]):
         yield ChatStatus(self._config.protocol, self._config.model)
 
     def on_mount(self) -> None:
-        self.query_one(Composer).focus()
+        prompt = self.query_one(Composer)
+        prompt.disabled = True
         self._show_permission_mode()
+        self._refresh_status("正在加载 MCP 工具")
+        self._load_mcp()
+
+    @work(exclusive=True)
+    async def _load_mcp(self) -> None:
+        warnings = await self._mcp_manager.start(self._agent._registry)
+        for warning in warnings:
+            self._show_error(f"MCP Server {warning.server_name} 未加载：{warning.reason}")
+        prompt = self.query_one(Composer)
+        prompt.disabled = False
+        prompt.focus()
         self._refresh_status("准备就绪")
+
+    @work(exclusive=True)
+    async def _shutdown_mcp_and_exit(self) -> None:
+        """先释放 MCP 子进程和连接，再结束终端会话。"""
+        await self._mcp_manager.close()
+        self.exit()
+
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """仅在输入首字符为 `/` 时展示模式菜单。"""
@@ -120,7 +141,7 @@ class ChatApp(App[None]):
             return
         event.composer.clear()
         if raw_prompt.lower() in {"/exit", "/quit"}:
-            self.exit()
+            self._shutdown_mcp_and_exit()
             return
 
         if raw_prompt.startswith("/"):
@@ -397,7 +418,7 @@ class ChatApp(App[None]):
         card = self._active_permission_card
         if card is None:
             return False
-        choice = card.handle_key(event.key)
+        choice = card.choose_for_key(event.key)
         if choice is not None:
             event.stop()
             event.prevent_default()

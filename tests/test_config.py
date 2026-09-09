@@ -94,3 +94,26 @@ def test_rejects_invalid_config_without_leaking_key(
 def test_requires_config_file(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="找不到配置文件"):
         load_config(tmp_path / "missing.yaml")
+
+
+def test_merges_user_and_project_mcp_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    appdata = tmp_path / "AppData"
+    user = appdata / "YuCode"
+    user.mkdir(parents=True)
+    (user / "yucode.yaml").write_text(
+        "mcp_servers:\n  user_only:\n    transport: stdio\n    command: user\n  replaced:\n    transport: stdio\n    command: old\n",
+        encoding="utf-8",
+    )
+    project = write_config(tmp_path, "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\nmcp_servers:\n  replaced:\n    transport: stdio\n    command: new\n  project_only:\n    transport: http\n    url: https://mcp.test\n")
+    monkeypatch.setenv("APPDATA", str(appdata))
+    config = load_config(project)
+    assert {server.name for server in config.mcp_servers} == {"user_only", "replaced", "project_only"}
+    assert next(server for server in config.mcp_servers if server.name == "replaced").command == "new"
+
+
+def test_mcp_expands_variables_and_keeps_bad_server_as_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TOKEN", "expanded")
+    path = write_config(tmp_path, "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\nmcp_servers:\n  ok:\n    transport: http\n    url: https://mcp.test\n    headers:\n      Authorization: Bearer ${TOKEN}\n  bad:\n    transport: stdio\n    command: ''\n")
+    config = load_config(path)
+    assert config.mcp_servers[0].headers["Authorization"] == "Bearer expanded"
+    assert config.mcp_issues[0].server_name == "bad"

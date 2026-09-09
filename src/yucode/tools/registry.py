@@ -42,3 +42,11 @@ class ToolRegistry:
 
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
+
+    def register_many(self, tools: Iterable[Tool]) -> None:
+        """原子追加已发现工具，拒绝任何名称冲突。"""
+        selected = tuple(tools)
+        names = [tool.definition.name for tool in selected]
+        if len(names) != len(set(names)) or any(name in self._tools for name in names):
+            raise ValueError("MCP 工具名称与现有工具冲突。")
+        self._tools.update({tool.definition.name: tool for tool in selected})

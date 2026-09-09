@@ -9,6 +9,7 @@ from rich.console import Console
 from yucode.agent import Agent
 from yucode.config import ConfigError, ProviderConfig, load_config
 from yucode.conversation import Conversation
+from yucode.mcp.manager import MCPManager
 from yucode.permissions import PermissionManager
 from yucode.providers.anthropic import AnthropicProvider
 from yucode.providers.base import Provider
@@ -35,6 +36,7 @@ def main() -> None:
         config.agent.max_iterations,
         permissions=permissions,
     )
+    agent.mcp_manager = MCPManager(config.mcp_servers, config.mcp_issues)
     ChatApp(agent, config.provider).run()
 
 

@@ -11,6 +11,24 @@ thinking:
 permissions:
   mode: default
 
+# MCP 工具 Server。用户级配置可放在 %APPDATA%\YuCode\yucode.yaml；
+# 项目级 yucode.yaml 中同名 Server 会完整覆盖用户级声明。
+# ${VAR} 会展开为启动 YuCode 的环境变量。每次 MCP 请求最长等待 30 秒。
+mcp_servers:
+  local_demo:
+    transport: stdio
+    command: python
+    args: ["-m", "my_mcp_server"]
+    env:
+      DEMO_TOKEN: ${DEMO_TOKEN}
+  remote_demo:
+    transport: http
+    url: https://example.com/mcp
+    headers:
+      Authorization: Bearer ${MCP_TOKEN}
+
+# 远端 get_weather 工具会以 MCP__local_demo__get_weather 名称提供给 Agent。
+
 # OpenAI 示例：
 # protocol: openai
 # model: gpt-5

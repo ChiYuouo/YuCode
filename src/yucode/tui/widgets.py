@@ -334,7 +334,7 @@ class InlinePermissionCard(Static):
         self._result: ToolResult | None = None
         self._update_display()
 
-    def handle_key(self, key: str) -> ApprovalChoice | None:
+    def choose_for_key(self, key: str) -> ApprovalChoice | None:
         """处理确认专用按键；未消费的按键交还给普通界面。"""
         if self._choice is not None or self._result is not None:
             return None
@@ -367,7 +367,7 @@ class InlinePermissionCard(Static):
         self._update_display()
 
     def _on_key(self, event: events.Key) -> None:
-        choice = self.handle_key(event.key)
+        choice = self.choose_for_key(event.key)
         if choice is not None:
             event.stop()
             event.prevent_default()

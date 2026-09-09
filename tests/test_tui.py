@@ -422,9 +422,9 @@ def test_inline_permission_card_supports_arrow_enter_and_escape() -> None:
             request = PermissionManager(Path.cwd()).request_for(ToolCall("call", "write_file", {"path": "a.txt"}))
             card = InlinePermissionCard(request)
             await app.query_one("#chat-view", VerticalScroll).mount(card)
-            assert card.handle_key("down") is None
-            assert card.handle_key("enter") is ApprovalChoice.SESSION
-            assert card.handle_key("escape") is ApprovalChoice.REJECT
+            assert card.choose_for_key("down") is None
+            assert card.choose_for_key("enter") is ApprovalChoice.SESSION
+            assert card.choose_for_key("escape") is ApprovalChoice.REJECT
             await pilot.pause()
 
     asyncio.run(check())
