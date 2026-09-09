@@ -37,6 +37,13 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class ContextConfig:
+    """供应商无关的上下文窗口预算。"""
+
+    window_tokens: int = 128_000
+
+
+@dataclass(frozen=True)
 class PermissionConfig:
     """启动时使用的权限模式。"""
 
@@ -70,6 +77,7 @@ class AppConfig:
 
     provider: ProviderConfig
     agent: AgentConfig = AgentConfig()
+    context: ContextConfig = ContextConfig()
     permissions: PermissionConfig = PermissionConfig()
     mcp_servers: tuple[MCPServerConfig, ...] = ()
     mcp_issues: tuple[MCPConfigIssue, ...] = ()
@@ -101,6 +109,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     api_key = _required_text(raw, "api_key")
     thinking_enabled = _parse_thinking(raw.get("thinking"))
     agent = _parse_agent(raw.get("agent"))
+    context = _parse_context(raw.get("context"))
     permissions = _parse_permissions(raw.get("permissions"))
 
     if protocol == "openai" and thinking_enabled:
@@ -116,6 +125,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             thinking_enabled=thinking_enabled,
         ),
         agent=agent,
+        context=context,
         permissions=permissions,
         mcp_servers=servers,
         mcp_issues=issues,
@@ -223,6 +233,19 @@ def _parse_agent(value: Any) -> AgentConfig:
     if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
         raise ConfigError("agent.max_iterations 必须是正整数。")
     return AgentConfig(max_iterations=max_iterations)
+
+
+def _parse_context(value: Any) -> ContextConfig:
+    if value is None:
+        return ContextConfig()
+    if not isinstance(value, Mapping):
+        raise ConfigError("context 必须是包含 window_tokens 的键值对象。")
+    window_tokens = value.get("window_tokens", 128_000)
+    if isinstance(window_tokens, bool) or not isinstance(window_tokens, int):
+        raise ConfigError("context.window_tokens 必须是整数。")
+    if window_tokens <= 13_000:
+        raise ConfigError("context.window_tokens 必须大于 13000。")
+    return ContextConfig(window_tokens=window_tokens)
 
 
 def _parse_permissions(value: Any) -> PermissionConfig:

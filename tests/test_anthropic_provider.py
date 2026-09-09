@@ -83,13 +83,14 @@ def test_omits_thinking_when_disabled() -> None:
 
 def test_converts_sse_error_to_provider_error() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
-        body = 'event: error\ndata: {"type":"error","error":{"message":"认证失败"}}\n\n'
+        body = 'event: error\ndata: {"type":"error","error":{"message":"认证失败","code":"context_length_exceeded"}}\n\n'
         return httpx.Response(200, content=body)
 
     provider = AnthropicProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
-    with pytest.raises(ProviderError, match="认证失败"):
+    with pytest.raises(ProviderError, match="认证失败") as error:
         collect(provider, [Message("user", "问题")])
+    assert error.value.code == "context_length_exceeded"
 
 
 def test_converts_http_error_to_provider_error() -> None:

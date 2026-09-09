@@ -41,6 +41,15 @@ def test_loads_agent_iteration_override(tmp_path: Path) -> None:
     assert load_config(path).agent.max_iterations == 3
 
 
+def test_loads_context_window_override(tmp_path: Path) -> None:
+    path = write_config(
+        tmp_path,
+        "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\ncontext:\n  window_tokens: 200000\n",
+    )
+
+    assert load_config(path).context.window_tokens == 200_000
+
+
 @pytest.mark.parametrize("mode", [item.value for item in PermissionMode])
 def test_loads_each_permission_mode(tmp_path: Path, mode: str) -> None:
     path = write_config(

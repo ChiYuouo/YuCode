@@ -7,6 +7,7 @@ from pathlib import Path
 from rich.console import Console
 
 from yucode.agent import Agent
+from yucode.context import ContextManager
 from yucode.config import ConfigError, ProviderConfig, load_config
 from yucode.conversation import Conversation
 from yucode.mcp.manager import MCPManager
@@ -29,12 +30,16 @@ def main() -> None:
 
     registry = ToolRegistry(Path.cwd())
     permissions = PermissionManager(registry.context.root, config.permissions.mode)
+    provider = create_provider(config.provider)
+    conversation = Conversation()
+    context = ContextManager(conversation, provider, registry.context.root, config.context)
     agent = Agent(
-        create_provider(config.provider),
-        Conversation(),
+        provider,
+        conversation,
         registry,
         config.agent.max_iterations,
         permissions=permissions,
+        context_manager=context,
     )
     agent.mcp_manager = MCPManager(config.mcp_servers, config.mcp_issues)
     ChatApp(agent, config.provider).run()

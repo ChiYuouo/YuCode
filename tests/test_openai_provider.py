@@ -71,13 +71,14 @@ def test_streams_text_and_sends_responses_payload() -> None:
 
 def test_converts_sse_error_to_provider_error() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
-        body = 'event: response.error\ndata: {"type":"response.error","error":{"message":"额度不足"}}\n\n'
+        body = 'event: response.error\ndata: {"type":"response.error","error":{"message":"额度不足","code":"prompt_too_long"}}\n\n'
         return httpx.Response(200, content=body)
 
     provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
 
-    with pytest.raises(ProviderError, match="额度不足"):
+    with pytest.raises(ProviderError, match="额度不足") as error:
         collect(provider, [Message("user", "你好")])
+    assert error.value.code == "prompt_too_long"
 
 
 def test_converts_http_error_to_provider_error() -> None:

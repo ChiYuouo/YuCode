@@ -4,16 +4,17 @@ from pathlib import Path
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown
 
-from yucode.agent import Agent, ToolCallStarted, ToolResultReady
+from yucode.agent import Agent, ContextUpdated, ToolCallStarted, ToolResultReady
 from yucode.config import ProviderConfig
 from yucode.conversation import Conversation
+from yucode.context import ContextAction, ContextResult
 from yucode.permissions import ApprovalChoice, PermissionManager, PermissionMode
 from yucode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
 from yucode.tools.base import ToolCall, ToolResult
 from yucode.tools.registry import ToolRegistry
 from yucode.tui.app import ChatApp
 from yucode.tui.widgets import (
-    AssistantMessage, ChatStatus, Composer, ErrorMessage, GenerationIndicator,
+    AssistantMessage, ChatStatus, Composer, ContextActivity, ErrorMessage, GenerationIndicator,
     InlinePermissionCard, ModeMenu, PendingToolActivity, ThinkingBox, ToolActivity, WelcomePanel,
 )
 
@@ -51,6 +52,8 @@ def test_tui_layout_widget() -> None:
             assert "██████╗" in rendered
             assert "( o.o )" not in rendered
             assert "claude-test" in str(welcome.render())
+            welcome.set_mcp_status(1, 2)
+            assert "MCP 已连接 1 个 Server · 已注册 2 个工具" in str(welcome.render())
             await pilot.pause()
 
     asyncio.run(check())
@@ -70,6 +73,56 @@ def test_tui_enter_sends_streams_and_updates_tokens() -> None:
             assert "I:3 O:5" in str(app.query_one(ChatStatus).render())
             assert "缓存数据不可用" in str(app.query_one(ChatStatus).render())
             assert composer.disabled is False
+
+    asyncio.run(check())
+
+
+def test_tui_compact_is_local_command_and_restores_input() -> None:
+    async def check() -> None:
+        provider = FakeProvider()
+        app = app_for_test(provider)
+        async with app.run_test() as pilot:
+            composer = app.query_one(Composer)
+            composer.text = "/compact"
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+            assert provider.requests == []
+            assert app._agent.conversation.messages == ()
+            assert "没有可压缩" in str(app.query_one(ContextActivity).render())
+            assert composer.disabled is False
+
+    asyncio.run(check())
+
+
+def test_tui_context_status_uses_compact_text_without_bold() -> None:
+    async def check() -> None:
+        app = app_for_test()
+        async with app.run_test() as pilot:
+            app._show_context_result(ContextUpdated(ContextResult(
+                ContextAction.AUTO, "offloaded", offloaded_count=1, released_characters=55_998,
+            )))
+            app._show_context_result(ContextUpdated(ContextResult(
+                ContextAction.AUTO, "compacted", before_tokens=4227, after_tokens=1192,
+            )))
+            await pilot.pause()
+            activities = list(app.query(ContextActivity))
+            assert "已外置 1 个工具结果到磁盘 · 55998 字符已释放" in str(activities[0].render())
+            assert "已压缩上下文 · 4227 → 1192 估算 Token" in str(activities[1].render())
+            assert all("bold" not in str(span.style) for activity in activities for span in activity.render().spans)
+
+    asyncio.run(check())
+
+
+def test_tui_hides_automatic_unchanged_but_keeps_manual_feedback() -> None:
+    async def check() -> None:
+        app = app_for_test()
+        async with app.run_test() as pilot:
+            app._show_context_result(ContextUpdated(ContextResult(ContextAction.AUTO, "unchanged", "自动跳过")))
+            app._show_context_result(ContextUpdated(ContextResult(ContextAction.MANUAL, "unchanged", "没有可压缩的较早历史。")))
+            await pilot.pause()
+            activities = list(app.query(ContextActivity))
+            assert len(activities) == 1
+            assert "没有可压缩" in str(activities[0].render())
 
     asyncio.run(check())
 

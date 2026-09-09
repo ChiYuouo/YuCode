@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from yucode.agent import (
-    Agent, AgentFinished, ProgressUpdated, StopReason, TextDelta,
+    Agent, AgentFinished, ContextUpdated, ProgressUpdated, StopReason, TextDelta,
     ToolResultReady, UsageUpdated,
 )
 from yucode.cancellation import Cancellation
@@ -152,6 +152,44 @@ def test_provider_error_keeps_partial_text_and_discards_tool_call(tmp_path: Path
     assert result.reason is StopReason.STREAM_ERROR and result.text == "部分"
     assert conversation.messages[-1].content == "部分"
     assert "网络断开" in (result.error or "")
+
+
+def test_prompt_too_long_compresses_and_retries_once(tmp_path: Path) -> None:
+    conversation = Conversation()
+    conversation.append_user("较早的原始要求")
+    for index in range(5):
+        conversation.append_assistant(f"近期 {index}" + "x" * 8_000)
+    summary = """<analysis-draft>草稿</analysis-draft><structured-summary>
+## 当前任务目标
+目标
+## 已经完成的工作
+无
+## 已执行验证及其结果
+无
+## 当前代码与文件状态
+无
+## 重要决定与约束
+无
+## 最近读取的文件快照
+无
+## 当前可用工具与外置资料位置
+无
+## 未完成事项与推荐下一步
+继续
+</structured-summary>"""
+    provider = FakeProvider([
+        [ProviderError("超限", "prompt_too_long")],
+        [StreamEvent("text", summary)],
+        [StreamEvent("text", "压缩后完成")],
+    ])
+    agent = Agent(provider, conversation, ToolRegistry(tmp_path))
+
+    events = collect(agent, "继续任务")
+
+    assert len(provider.requests) == 3
+    assert provider.requests[1].tools == ()
+    assert any(event.result.status == "compacted" for event in events if isinstance(event, ContextUpdated))
+    assert finished(events).text == "压缩后完成"
 
 
 def test_cancelled_before_first_event_rolls_back_user_message(tmp_path: Path) -> None:

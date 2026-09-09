@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from yucode.cancellation import Cancellation
+from yucode.context import ContextManager, ContextResult
 from yucode.conversation import Conversation
 from yucode.permissions import (
     ApprovalCallback,
@@ -78,6 +79,11 @@ class ProgressUpdated:
 
 
 @dataclass(frozen=True)
+class ContextUpdated:
+    result: ContextResult
+
+
+@dataclass(frozen=True)
 class AgentFinished:
     reason: StopReason
     text: str
@@ -92,6 +98,7 @@ AgentEvent = (
     | ToolResultReady
     | UsageUpdated
     | ProgressUpdated
+    | ContextUpdated
     | AgentFinished
 )
 
@@ -114,6 +121,7 @@ class Agent:
         max_iterations: int = 10,
         prompt_builder: SystemPromptBuilder | None = None,
         permissions: PermissionManager | None = None,
+        context_manager: ContextManager | None = None,
     ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations 必须是正整数。")
@@ -125,6 +133,7 @@ class Agent:
         self._max_iterations = max_iterations
         self._prompt_builder = prompt_builder or SystemPromptBuilder()
         self._redactor = SensitiveDataRedactor()
+        self._context = context_manager or ContextManager(conversation, provider, registry.context.root)
 
     @property
     def conversation(self) -> Conversation:
@@ -133,6 +142,12 @@ class Agent:
     @property
     def permissions(self) -> PermissionManager:
         return self._permissions
+
+    async def compact(self, cancellation: Cancellation) -> AsyncIterator[AgentEvent]:
+        """执行不进入普通对话的手动上下文压缩。"""
+        tools = self._registry.read_only_definitions if self._permissions.mode is PermissionMode.PLAN else self._registry.definitions
+        async for result in self._context.compact_manually(tools, cancellation):
+            yield ContextUpdated(result)
 
     async def run(
         self,
@@ -149,6 +164,7 @@ class Agent:
         runtime_mode = "plan" if is_plan else "full"
         authorization = classify_authorization(text, runtime_mode)
         workflow = ToolWorkflow(self._registry.context.root)
+        emergency_retried = False
 
         for iteration in range(1, self._max_iterations + 1):
             if cancellation.is_cancelled:
@@ -167,6 +183,8 @@ class Agent:
             requires_guarded_response = requires_verification
             try:
                 tools = self._registry.read_only_definitions if is_plan else self._registry.definitions
+                async for result in self._context.prepare_request(tools, cancellation):
+                    yield ContextUpdated(result)
                 request = self._prompt_builder.build(
                     RuntimeContext(
                         self._registry.context.root,
@@ -208,6 +226,18 @@ class Agent:
                     yield event
                 return
             except Exception as error:
+                if (
+                    isinstance(error, ProviderError)
+                    and _is_context_limit_error(error)
+                    and not emergency_retried
+                ):
+                    emergency_result = None
+                    async for result in self._context.compact_emergency(tools, cancellation):
+                        yield ContextUpdated(result)
+                        emergency_result = result
+                    if emergency_result is not None and emergency_result.status == "compacted":
+                        emergency_retried = True
+                        continue
                 total = _add_usage(total, response.usage)
                 if response.text:
                     self._conversation.append_partial_assistant(response.text)
@@ -220,6 +250,7 @@ class Agent:
                 return
 
             total = _add_usage(total, response.usage)
+            self._context.record_model_usage(response.usage)
             if response.text and not requires_guarded_response:
                 visible_parts.append(response.text)
 
@@ -322,3 +353,11 @@ def _add_usage(first: Usage, second: Usage) -> Usage:
         first.thinking_tokens + second.thinking_tokens,
         cache,
     )
+
+
+def _is_context_limit_error(error: ProviderError) -> bool:
+    code = (error.code or "").lower()
+    if code in {"prompt_too_long", "context_length_exceeded", "context_window_exceeded"}:
+        return True
+    text = str(error).lower()
+    return "prompt_too_long" in text or "context length" in text or "上下文过长" in text

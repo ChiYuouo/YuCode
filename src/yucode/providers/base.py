@@ -82,6 +82,10 @@ class Usage:
 class ProviderError(RuntimeError):
     """供应商请求或响应解析失败。"""
 
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 class StreamCancelled(RuntimeError):
     """用户主动停止当前生成。"""

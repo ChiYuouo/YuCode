@@ -20,6 +20,17 @@ class MCPManager:
     def __init__(self, servers: tuple[MCPServerConfig, ...] = (), issues: tuple[MCPConfigIssue, ...] = ()) -> None:
         self._servers, self._issues = servers, issues
         self._sessions: dict[str, MCPClientSession] = {}
+        self._tool_count = 0
+
+    @property
+    def connected_count(self) -> int:
+        """当前会话已成功连接的 MCP Server 数量。"""
+        return len(self._sessions)
+
+    @property
+    def tool_count(self) -> int:
+        """当前会话从 MCP Server 注册的工具数量。"""
+        return self._tool_count
 
     async def start(self, registry: ToolRegistry) -> tuple[MCPStartupWarning, ...]:
         warnings = [MCPStartupWarning(issue.server_name, issue.reason) for issue in self._issues]
@@ -30,6 +41,7 @@ class MCPManager:
                 adapted = [MCPTool(config.name, tool, session) for tool in tools]
                 registry.register_many(adapted)
                 self._sessions[config.name] = session
+                self._tool_count += len(adapted)
             except Exception as error:
                 await session.close()
                 warnings.append(MCPStartupWarning(config.name, str(error)))
@@ -37,6 +49,7 @@ class MCPManager:
 
     async def close(self) -> None:
         sessions, self._sessions = tuple(self._sessions.values()), {}
+        self._tool_count = 0
         for session in sessions:
             try:
                 await session.close()

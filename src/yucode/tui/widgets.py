@@ -72,12 +72,25 @@ class WelcomePanel(Static):
     )
 
     def __init__(self, provider: str, model: str) -> None:
+        self._provider = provider
+        self._model = model
+        self._mcp_status = "正在加载 MCP 工具…"
+        super().__init__(id="welcome-panel")
+        self._refresh()
+
+    def set_mcp_status(self, connected: int, tools: int) -> None:
+        """显示启动阶段发现到的 MCP Server 与工具数量。"""
+        self._mcp_status = f"MCP 已连接 {connected} 个 Server · 已注册 {tools} 个工具"
+        self._refresh()
+
+    def _refresh(self) -> None:
         content = Text(justify="center")
         content.append(self._WORDMARK, style="bold #f4a261")
         content.append("\n◆ ─────────── ◇ ─────────── ◆", style="#63d8ef")
         content.append(f"\n目录  {Path.cwd()}", style="#b8c4c7")
-        content.append(f"\n模型  {provider} / {model}", style="#b8c4c7")
-        super().__init__(content, id="welcome-panel")
+        content.append(f"\n模型  {self._provider} / {self._model}", style="#b8c4c7")
+        content.append(f"\n{self._mcp_status}", style="#63d8ef")
+        self.update(content)
 
 
 class ChatStatus(Static):
@@ -248,6 +261,15 @@ class ErrorMessage(Static):
         message = Text("! 请求失败：", style="bold #ff8170")
         message.append(content, style="#ffb4a9")
         super().__init__(message, classes="message error-message")
+
+
+class ContextActivity(Static):
+    """显示上下文管理的简短状态，不展示内部摘要。"""
+
+    def __init__(self, content: str, failed: bool = False) -> None:
+        text = Text("! " if failed else "◇ ", style="#ffb4a9" if failed else "#63d8ef")
+        text.append(content, style="#ffb4a9" if failed else "#c8d2d5")
+        super().__init__(text, classes="message context-activity")
 
 
 class ToolActivity(Static):

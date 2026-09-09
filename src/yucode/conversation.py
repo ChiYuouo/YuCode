@@ -18,6 +18,10 @@ class Conversation:
     def messages(self) -> tuple[Message, ...]:
         return tuple(self._messages)
 
+    def replace_messages(self, messages: Sequence[Message]) -> None:
+        """原子替换完整历史，供上下文压缩在准备完成后提交。"""
+        self._messages = list(messages)
+
     def append_user(self, text: str) -> None:
         """追加用户正文；必要时接在尚未获回复的工具结果后。"""
         if self._messages and self._messages[-1].role == "user" and not isinstance(self._messages[-1].content, str):

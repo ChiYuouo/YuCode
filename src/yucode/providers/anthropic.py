@@ -128,7 +128,8 @@ class AnthropicProvider:
                             ),
                         )
                 elif event_type == "error":
-                    raise ProviderError(f"Claude 流式请求失败：{_error_message(event)}")
+                    message, code = _error_details(event)
+                    raise ProviderError(f"Claude 流式请求失败：{message}", code)
                 elif event_type == "message_delta":
                     usage = _usage_from_delta(event, input_usage)
                     if usage is not None:
@@ -183,18 +184,23 @@ class AnthropicProvider:
         if response.is_success:
             return
         await response.aread()
-        raise ProviderError(
-            f"Claude 请求失败（HTTP {response.status_code}）：{_response_error_message(response)}"
-        )
+        message, code = _response_error_details(response)
+        raise ProviderError(f"Claude 请求失败（HTTP {response.status_code}）：{message}", code)
 
 
 def _error_message(event: dict[str, Any]) -> str:
+    return _error_details(event)[0]
+
+
+def _error_details(event: dict[str, Any]) -> tuple[str, str | None]:
     error = event.get("error")
     if isinstance(error, dict) and isinstance(error.get("message"), str):
-        return error["message"]
+        code = error.get("code")
+        return error["message"], code if isinstance(code, str) else None
     if isinstance(event.get("message"), str):
-        return event["message"]
-    return "服务返回未知错误。"
+        code = event.get("code")
+        return event["message"], code if isinstance(code, str) else None
+    return "服务返回未知错误。", None
 
 
 def _http_error_message(error: httpx.HTTPError) -> str:
@@ -202,11 +208,15 @@ def _http_error_message(error: httpx.HTTPError) -> str:
 
 
 def _response_error_message(response: httpx.Response) -> str:
+    return _response_error_details(response)[0]
+
+
+def _response_error_details(response: httpx.Response) -> tuple[str, str | None]:
     try:
         data = response.json()
     except json.JSONDecodeError:
-        return "服务未返回可读错误信息。"
-    return _error_message(data) if isinstance(data, dict) else "服务未返回可读错误信息。"
+        return "服务未返回可读错误信息。", None
+    return _error_details(data) if isinstance(data, dict) else ("服务未返回可读错误信息。", None)
 
 
 def _input_usage(event: dict[str, Any]) -> Usage:

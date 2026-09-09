@@ -12,7 +12,7 @@ from textual.timer import Timer
 from textual.widgets import OptionList, TextArea
 
 from yucode.agent import (
-    Agent, AgentFinished, ProgressPhase, ProgressUpdated, TextDelta,
+    Agent, AgentFinished, ContextUpdated, ProgressPhase, ProgressUpdated, TextDelta,
     ThinkingDelta, ToolCallStarted, ToolResultReady, UsageUpdated,
 )
 from yucode.cancellation import Cancellation
@@ -21,7 +21,7 @@ from yucode.mcp.manager import MCPManager
 from yucode.permissions import ApprovalChoice, PermissionMode, PermissionRequest
 from yucode.providers.base import CacheUsage
 from yucode.tui.widgets import (
-    AssistantMessage,
+    AssistantMessage, ContextActivity,
     ChatStatus,
     Composer,
     ErrorMessage,
@@ -109,6 +109,9 @@ class ChatApp(App[None]):
     @work(exclusive=True)
     async def _load_mcp(self) -> None:
         warnings = await self._mcp_manager.start(self._agent._registry)
+        self.query_one(WelcomePanel).set_mcp_status(
+            self._mcp_manager.connected_count, self._mcp_manager.tool_count
+        )
         for warning in warnings:
             self._show_error(f"MCP Server {warning.server_name} 未加载：{warning.reason}")
         prompt = self.query_one(Composer)
@@ -142,6 +145,9 @@ class ChatApp(App[None]):
         event.composer.clear()
         if raw_prompt.lower() in {"/exit", "/quit"}:
             self._shutdown_mcp_and_exit()
+            return
+        if raw_prompt.lower() == "/compact":
+            self._start_context_compaction()
             return
 
         if raw_prompt.startswith("/"):
@@ -220,7 +226,7 @@ class ChatApp(App[None]):
     @staticmethod
     def _is_mode_query(text: str) -> bool:
         stripped = text.strip().lower()
-        return stripped.startswith("/") and stripped not in {"/exit", "/quit"}
+        return stripped.startswith("/") and stripped not in {"/exit", "/quit", "/compact"}
 
     def _select_highlighted_mode(self) -> bool:
         menu = self.query_one(ModeMenu)
@@ -292,8 +298,39 @@ class ChatApp(App[None]):
                 elif event.phase is ProgressPhase.TOOLS and self._assistant_message is not None:
                     self._assistant_message.finish()
                 self._refresh_status(event.detail)
+            elif isinstance(event, ContextUpdated):
+                self._show_context_result(event)
             elif isinstance(event, AgentFinished):
                 self._finish_generation(event)
+
+    def _start_context_compaction(self) -> None:
+        self._generating = True
+        self._cancellation = Cancellation()
+        prompt = self.query_one("#prompt", Composer)
+        prompt.disabled = True
+        self._refresh_status("正在压缩上下文")
+        self.compact_context(self._cancellation)
+
+    @work(group="generation", exclusive=True, exit_on_error=False)
+    async def compact_context(self, cancellation: Cancellation) -> None:
+        async for event in self._agent.compact(cancellation):
+            if isinstance(event, ContextUpdated):
+                self._show_context_result(event)
+        self._stop_activity_clock()
+        self._generating = False
+        self._cancellation = None
+        prompt = self.query_one("#prompt", Composer)
+        prompt.disabled = False
+        prompt.focus()
+        self._refresh_status("准备就绪")
+
+    def _show_context_result(self, event: ContextUpdated) -> None:
+        result = event.result
+        if result.action.value == "auto" and result.status == "unchanged":
+            return
+        failed = result.status in {"failed", "circuit_open"}
+        self.query_one("#chat-view", VerticalScroll).mount(ContextActivity(_context_text(result), failed))
+        self._scroll_to_latest(self.query_one("#chat-view", VerticalScroll))
 
     async def _append_text(self, content: str) -> None:
         if self._assistant_message is None:
@@ -468,3 +505,14 @@ class ChatApp(App[None]):
 
     def _scroll_to_latest(self, chat: VerticalScroll) -> None:
         self.call_after_refresh(chat.scroll_end, animate=False)
+
+
+def _context_text(result) -> str:
+    """将上下文处理数据渲染为紧凑、稳定的终端状态。"""
+    if result.status == "offloaded":
+        return f"已外置 {result.offloaded_count} 个工具结果到磁盘 · {result.released_characters} 字符已释放"
+    if result.status == "compacting":
+        return "正在压缩上下文…"
+    if result.status == "compacted":
+        return f"已压缩上下文 · {result.before_tokens} → {result.after_tokens} 估算 Token"
+    return result.detail
