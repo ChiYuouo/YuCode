@@ -90,3 +90,18 @@ def test_strict_rules_and_runtime_authorization_use_unambiguous_language() -> No
     assert "回答优先" in reminder
     assert "待验证目标：a.txt" in reminder
     assert "违反授权或流程被拒绝" in reminder
+
+
+def test_loaded_instructions_and_memory_stay_stable_while_recovery_reminder_is_runtime_only() -> None:
+    builder = SystemPromptBuilder("项目根规则\n\n项目配置规则\n\n用户规则", (), "用户记忆\n\n项目记忆")
+    request = builder.build(
+        RuntimeContext(Path("C:/workspace"), "full", 1, recovery_time_gap="距离上次活动已过去 2 天"),
+        tools(),
+        (),
+    )
+
+    assert request.stable_instructions.index("项目根规则") < request.stable_instructions.index("项目配置规则")
+    assert request.stable_instructions.index("项目配置规则") < request.stable_instructions.index("用户规则")
+    assert "用户记忆" in request.stable_instructions and "项目记忆" in request.stable_instructions
+    assert "距离上次活动已过去 2 天" not in request.stable_instructions
+    assert "距离上次活动已过去 2 天" in request.runtime_messages[0].content

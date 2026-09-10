@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 from yucode.cancellation import Cancellation
 from yucode.context import ContextManager, ContextResult
 from yucode.conversation import Conversation
+from yucode.memory import MemoryManager
 from yucode.permissions import (
     ApprovalCallback,
     PermissionManager,
@@ -22,6 +24,7 @@ from yucode.tools.base import ToolCall, ToolResult
 from yucode.tools.executor import ToolExecutor
 from yucode.tools.registry import ToolRegistry
 from yucode.workflow import ToolWorkflow
+from yucode.sessions import RecoveredSession
 
 
 class StopReason(str, Enum):
@@ -91,6 +94,13 @@ class AgentFinished:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class SessionRestoreFinished:
+    success: bool
+    detail: str
+    warnings: tuple[str, ...] = ()
+
+
 AgentEvent = (
     TextDelta
     | ThinkingDelta
@@ -100,6 +110,7 @@ AgentEvent = (
     | ProgressUpdated
     | ContextUpdated
     | AgentFinished
+    | SessionRestoreFinished
 )
 
 
@@ -122,6 +133,7 @@ class Agent:
         prompt_builder: SystemPromptBuilder | None = None,
         permissions: PermissionManager | None = None,
         context_manager: ContextManager | None = None,
+        memory_manager: MemoryManager | None = None,
     ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations 必须是正整数。")
@@ -134,6 +146,9 @@ class Agent:
         self._prompt_builder = prompt_builder or SystemPromptBuilder()
         self._redactor = SensitiveDataRedactor()
         self._context = context_manager or ContextManager(conversation, provider, registry.context.root)
+        self._memory = memory_manager
+        self._recovery_time_gap: str | None = None
+        self._recovery_context_guard = False
 
     @property
     def conversation(self) -> Conversation:
@@ -149,12 +164,36 @@ class Agent:
         async for result in self._context.compact_manually(tools, cancellation):
             yield ContextUpdated(result)
 
+    async def restore_session(
+        self, recovered: RecoveredSession, cancellation: Cancellation
+    ) -> AsyncIterator[AgentEvent]:
+        """恢复可信历史，并在必要时只执行一次上下文压缩。"""
+        previous = self._conversation.messages
+        self._conversation.replace_for_recovery(recovered.messages)
+        tools = self._registry.read_only_definitions if self._permissions.mode is PermissionMode.PLAN else self._registry.definitions
+        failed = False
+        detail = "历史会话已恢复。"
+        async for result in self._context.prepare_recovered_history(tools, cancellation):
+            yield ContextUpdated(result)
+            if result.status in {"failed", "circuit_open"}:
+                failed = True
+                detail = result.detail or "恢复会话失败。"
+        if failed:
+            self._conversation.replace_for_recovery(previous)
+            yield SessionRestoreFinished(False, detail, recovered.warnings)
+            return
+        elapsed = datetime.now(UTC) - recovered.last_active_at
+        self._recovery_time_gap = _time_gap_reminder(elapsed) if elapsed >= timedelta(hours=24) else None
+        self._recovery_context_guard = True
+        yield SessionRestoreFinished(True, detail, recovered.warnings)
+
     async def run(
         self,
         text: str,
         cancellation: Cancellation,
         approve: ApprovalCallback | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        turn_start = len(self._conversation.messages)
         self._conversation.append_user(text)
         total = Usage()
         visible_parts: list[str] = []
@@ -185,6 +224,7 @@ class Agent:
                 tools = self._registry.read_only_definitions if is_plan else self._registry.definitions
                 async for result in self._context.prepare_request(tools, cancellation):
                     yield ContextUpdated(result)
+                recovery_guarded_request = self._recovery_context_guard
                 request = self._prompt_builder.build(
                     RuntimeContext(
                         self._registry.context.root,
@@ -193,10 +233,13 @@ class Agent:
                         authorization.value,
                         tuple(sorted(workflow.pending_verifications)),
                         False,
+                        self._recovery_time_gap,
                     ),
                     tools,
                     self._conversation.messages,
                 )
+                self._recovery_time_gap = None
+                self._recovery_context_guard = False
                 async for event in self._provider.stream(request, cancellation):
                     if cancellation.is_cancelled:
                         raise StreamCancelled()
@@ -230,6 +273,7 @@ class Agent:
                     isinstance(error, ProviderError)
                     and _is_context_limit_error(error)
                     and not emergency_retried
+                    and not recovery_guarded_request
                 ):
                     emergency_result = None
                     async for result in self._context.compact_emergency(tools, cancellation):
@@ -270,6 +314,8 @@ class Agent:
                     verification_misses += 1
                     continue
                 self._conversation.append_assistant(response.text)
+                if self._memory is not None:
+                    self._memory.schedule_update(self._conversation.messages[turn_start:])
                 async for event in self._finish(StopReason.COMPLETED, visible_parts, total, iteration, "任务已完成。"):
                     yield event
                 return
@@ -361,3 +407,10 @@ def _is_context_limit_error(error: ProviderError) -> bool:
         return True
     text = str(error).lower()
     return "prompt_too_long" in text or "context length" in text or "上下文过长" in text
+
+
+def _time_gap_reminder(elapsed: timedelta) -> str:
+    hours = max(24, int(elapsed.total_seconds() // 3600))
+    if hours >= 48:
+        return f"距离上次活动已过去约 {hours // 24} 天"
+    return "距离上次活动已过去约 24 小时"

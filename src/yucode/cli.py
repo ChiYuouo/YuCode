@@ -10,11 +10,15 @@ from yucode.agent import Agent
 from yucode.context import ContextManager
 from yucode.config import ConfigError, ProviderConfig, load_config
 from yucode.conversation import Conversation
+from yucode.instructions import InstructionLoader
+from yucode.memory import MemoryManager
 from yucode.mcp.manager import MCPManager
 from yucode.permissions import PermissionManager
 from yucode.providers.anthropic import AnthropicProvider
 from yucode.providers.base import Provider
 from yucode.providers.openai import OpenAIProvider
+from yucode.prompting import SystemPromptBuilder
+from yucode.sessions import SessionManager
 from yucode.tools.registry import ToolRegistry
 from yucode.tui.app import ChatApp
 
@@ -28,10 +32,19 @@ def main() -> None:
         console.print(f"配置错误：{error}", style="red")
         return
 
-    registry = ToolRegistry(Path.cwd())
+    workspace_root = Path.cwd()
+    registry = ToolRegistry(workspace_root)
     permissions = PermissionManager(registry.context.root, config.permissions.mode)
     provider = create_provider(config.provider)
-    conversation = Conversation()
+    loaded_instructions = InstructionLoader().load(workspace_root)
+    memory = MemoryManager(provider, workspace_root)
+    indexes = memory.load_indexes()
+    memory_text = "\n\n".join(f"{index.scope.value} 记忆索引：\n{index.content}" for index in indexes)
+    prompt_builder = SystemPromptBuilder(loaded_instructions.content, long_term_memory=memory_text)
+    sessions = SessionManager(workspace_root)
+    sessions.create_session()
+    sessions.cleanup_expired()
+    conversation = Conversation(sessions.record_event)
     context = ContextManager(conversation, provider, registry.context.root, config.context)
     agent = Agent(
         provider,
@@ -40,8 +53,12 @@ def main() -> None:
         config.agent.max_iterations,
         permissions=permissions,
         context_manager=context,
+        prompt_builder=prompt_builder,
+        memory_manager=memory,
     )
     agent.mcp_manager = MCPManager(config.mcp_servers, config.mcp_issues)
+    agent.session_manager = sessions
+    agent.startup_warnings = (*loaded_instructions.warnings, *memory.drain_diagnostics())
     ChatApp(agent, config.provider).run()
 
 

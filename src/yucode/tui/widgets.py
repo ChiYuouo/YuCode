@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from rich.text import Text
@@ -15,6 +16,7 @@ from textual.widgets.option_list import Option
 from yucode.permissions import ApprovalChoice, PermissionRequest
 from yucode.tools.base import ToolCall, ToolResult
 from yucode.providers.base import CacheUsage
+from yucode.sessions import SessionSummary
 
 
 SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
@@ -174,6 +176,7 @@ class ModeMenu(OptionList):
     _OPTIONS = {
         "plan": "Plan  ·  只读分析与计划",
         "do": "Do    ·  完整工具执行",
+        "resume": "Resume · 恢复历史会话",
     }
 
     def __init__(self) -> None:
@@ -193,6 +196,28 @@ class ModeMenu(OptionList):
             self.highlighted = 0 if options else None
         self.display = bool(options)
         return bool(options)
+
+    def hide(self) -> None:
+        self.display = False
+
+
+class SessionPicker(OptionList):
+    """展示当前项目可恢复的历史会话。"""
+
+    def __init__(self) -> None:
+        super().__init__(id="session-picker", classes="mode-menu", compact=True)
+        self.display = False
+
+    def show_sessions(self, sessions: Sequence[SessionSummary]) -> None:
+        self.set_options([
+            Option(
+                f"{item.session_id}  ·  {item.title}  ·  {item.last_active_at.astimezone():%Y-%m-%d %H:%M}  ·  {item.message_count} 条",
+                id=item.session_id,
+            )
+            for item in sessions
+        ])
+        self.highlighted = 0 if sessions else None
+        self.display = bool(sessions)
 
     def hide(self) -> None:
         self.display = False

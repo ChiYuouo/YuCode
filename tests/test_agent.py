@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from yucode.agent import (
-    Agent, AgentFinished, ContextUpdated, ProgressUpdated, StopReason, TextDelta,
+    Agent, AgentFinished, ContextUpdated, ProgressUpdated, SessionRestoreFinished, StopReason, TextDelta,
     ToolResultReady, UsageUpdated,
 )
 from yucode.cancellation import Cancellation
@@ -14,6 +14,8 @@ from yucode.permissions import ApprovalChoice, PermissionMode
 from yucode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, ToolResultContent, Usage
 from yucode.tools.base import ToolCall
 from yucode.tools.registry import ToolRegistry
+from yucode.sessions import RecoveredSession, SessionSummary
+from datetime import UTC, datetime, timedelta
 
 
 class FakeProvider:
@@ -376,3 +378,46 @@ def test_redacts_sensitive_text_before_showing_or_storing_history(tmp_path: Path
     assert "sk-abcdefghijk" not in finished(events).text
     assert "[已脱敏]" in finished(events).text
     assert "sk-abcdefghijk" not in str(agent.conversation.messages)
+
+
+def test_restores_history_and_adds_one_time_gap_reminder(tmp_path: Path) -> None:
+    provider = FakeProvider([[StreamEvent("text", "已继续")]])
+    previous = Conversation()
+    previous.append_user("历史事实")
+    previous.append_assistant("已完成历史任务")
+    last_active = datetime.now(UTC) - timedelta(days=2)
+    recovered = RecoveredSession(
+        SessionSummary("20260101-000000-abcd", "历史事实", last_active, 2),
+        previous.messages,
+        last_active,
+        ("已跳过一条坏行",),
+    )
+    agent = Agent(provider, Conversation(), ToolRegistry(tmp_path))
+
+    async def restore():
+        return [event async for event in agent.restore_session(recovered, Cancellation())]
+
+    events = asyncio.run(restore())
+    assert events[-1] == SessionRestoreFinished(True, "历史会话已恢复。", ("已跳过一条坏行",))
+
+    collect(agent, "继续")
+    assert "历史事实" in str(provider.requests[0].history)
+    assert "距离上次活动" in provider.requests[0].runtime_messages[0].content
+
+
+def test_schedules_memory_only_after_natural_completion(tmp_path: Path) -> None:
+    class RecordingMemory:
+        def __init__(self) -> None:
+            self.turns = []
+
+        def schedule_update(self, turn) -> None:
+            self.turns.append(tuple(turn))
+
+    memory = RecordingMemory()
+    provider = FakeProvider([[StreamEvent("text", "完成")]])
+    agent = Agent(provider, Conversation(), ToolRegistry(tmp_path), memory_manager=memory)
+
+    collect(agent, "记住这个偏好")
+
+    assert len(memory.turns) == 1
+    assert "记住这个偏好" in str(memory.turns[0]) and "完成" in str(memory.turns[0])

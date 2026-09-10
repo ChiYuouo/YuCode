@@ -1,4 +1,4 @@
-from yucode.conversation import Conversation
+from yucode.conversation import Conversation, ConversationEvent
 from yucode.providers.base import TextContent, ToolCallContent, ToolResultContent
 from yucode.tools.base import ToolCall, ToolResult
 
@@ -37,3 +37,35 @@ def test_discards_only_last_plain_user() -> None:
     conversation.append_user("问题")
     conversation.discard_last_plain_user()
     assert conversation.messages == ()
+
+
+def test_records_each_raw_append_without_repeating_merged_tool_results() -> None:
+    events: list[ConversationEvent] = []
+    conversation = Conversation(events.append)
+    call = ToolCall("1", "read_file", {"path": "a"})
+    result = ToolResult("1", "read_file", True, "已读取", "内容")
+
+    conversation.append_user("读取")
+    conversation.append_assistant("", [call])
+    conversation.append_tool_results([result])
+    conversation.append_user("继续")
+    conversation.append_partial_assistant("部分回复")
+
+    assert events == [
+        ConversationEvent("user", "读取"),
+        ConversationEvent("assistant", "", (call,)),
+        ConversationEvent("tool_results", results=(result,)),
+        ConversationEvent("user", "继续"),
+        ConversationEvent("partial_assistant", "部分回复"),
+    ]
+
+
+def test_recovery_replacement_does_not_record() -> None:
+    events: list[ConversationEvent] = []
+    conversation = Conversation(events.append)
+    messages = (conversation.messages,)
+
+    conversation.replace_for_recovery(messages[0])
+    conversation.replace_messages(messages[0])
+
+    assert events == []

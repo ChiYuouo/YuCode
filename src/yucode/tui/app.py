@@ -13,20 +13,20 @@ from textual.widgets import OptionList, TextArea
 
 from yucode.agent import (
     Agent, AgentFinished, ContextUpdated, ProgressPhase, ProgressUpdated, TextDelta,
-    ThinkingDelta, ToolCallStarted, ToolResultReady, UsageUpdated,
+    ThinkingDelta, ToolCallStarted, ToolResultReady, UsageUpdated, SessionRestoreFinished,
 )
 from yucode.cancellation import Cancellation
 from yucode.config import ProviderConfig
 from yucode.mcp.manager import MCPManager
 from yucode.permissions import ApprovalChoice, PermissionMode, PermissionRequest
-from yucode.providers.base import CacheUsage
+from yucode.providers.base import CacheUsage, TextContent, ToolResultContent
 from yucode.tui.widgets import (
     AssistantMessage, ContextActivity,
     ChatStatus,
     Composer,
     ErrorMessage,
     InlinePermissionCard,
-    ModeMenu,
+    ModeMenu, SessionPicker,
     PendingToolActivity,
     SPINNER_FRAMES,
     ToolActivity,
@@ -88,12 +88,16 @@ class ChatApp(App[None]):
         self._activity_timer: Timer | None = None
         self._activity_frame = 0
         self._pending_tools: dict[str, PendingToolActivity] = {}
+        self._sessions = getattr(agent, "session_manager", None)
+        self._memory = getattr(agent, "_memory", None)
+        self._startup_warnings = tuple(getattr(agent, "startup_warnings", ()))
 
     def compose(self) -> ComposeResult:
         yield VerticalScroll(
             WelcomePanel(self._config.protocol, self._config.model), id="chat-view"
         )
         yield ModeMenu()
+        yield SessionPicker()
         yield Composer(
             placeholder="输入消息…  Enter 发送 · Shift+Enter 换行 · Shift+Tab 切换权限", id="prompt", soft_wrap=True
         )
@@ -103,6 +107,7 @@ class ChatApp(App[None]):
         prompt = self.query_one(Composer)
         prompt.disabled = True
         self._show_permission_mode()
+        self.set_interval(0.8, self._show_memory_diagnostics)
         self._refresh_status("正在加载 MCP 工具")
         self._load_mcp()
 
@@ -114,6 +119,8 @@ class ChatApp(App[None]):
         )
         for warning in warnings:
             self._show_error(f"MCP Server {warning.server_name} 未加载：{warning.reason}")
+        for warning in self._startup_warnings:
+            self._show_error(warning)
         prompt = self.query_one(Composer)
         prompt.disabled = False
         prompt.focus()
@@ -122,6 +129,8 @@ class ChatApp(App[None]):
     @work(exclusive=True)
     async def _shutdown_mcp_and_exit(self) -> None:
         """先释放 MCP 子进程和连接，再结束终端会话。"""
+        if self._memory is not None:
+            await self._memory.wait_for_pending_updates()
         await self._mcp_manager.close()
         self.exit()
 
@@ -148,6 +157,9 @@ class ChatApp(App[None]):
             return
         if raw_prompt.lower() == "/compact":
             self._start_context_compaction()
+            return
+        if raw_prompt.lower() == "/resume":
+            self._start_resume_selection()
             return
 
         if raw_prompt.startswith("/"):
@@ -209,11 +221,11 @@ class ChatApp(App[None]):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """接受鼠标选择的模式菜单项。"""
-        if event.option_list.id != "mode-menu":
-            return
         event.stop()
-        if event.option_id is not None:
+        if event.option_list.id == "mode-menu" and event.option_id is not None:
             self._activate_mode(event.option_id)
+        elif event.option_list.id == "session-picker" and event.option_id is not None:
+            self._begin_restore(event.option_id)
 
     def _update_mode_menu(self, text: str) -> None:
         menu = self.query_one(ModeMenu)
@@ -245,6 +257,9 @@ class ChatApp(App[None]):
         elif option_id == "do":
             self._agent.permissions.resume_do_mode()
             self._show_permission_mode()
+        elif option_id == "resume":
+            self._start_resume_selection()
+            return
         else:
             return
         self.query_one(ModeMenu).hide()
@@ -252,6 +267,89 @@ class ChatApp(App[None]):
         composer.clear()
         composer.focus()
         self._refresh_status("准备就绪")
+
+    def _start_resume_selection(self) -> None:
+        """读取会话概要并显示选择列表。"""
+        self.query_one(ModeMenu).hide()
+        composer = self.query_one(Composer)
+        composer.clear()
+        if self._sessions is None:
+            self._show_error("当前会话未启用历史恢复。")
+            composer.focus()
+            return
+        summaries = self._sessions.list_sessions()
+        if not summaries:
+            self._show_error("当前项目没有可恢复的历史会话。")
+            composer.focus()
+            return
+        picker = self.query_one(SessionPicker)
+        picker.show_sessions(summaries)
+        composer.disabled = True
+        picker.focus()
+        self._refresh_status("选择要恢复的历史会话 · Esc 取消")
+
+    def _begin_restore(self, session_id: str) -> None:
+        self.query_one(SessionPicker).hide()
+        self._refresh_status("正在恢复历史会话")
+        self.restore_session(session_id)
+
+    @work(group="generation", exclusive=True, exit_on_error=False)
+    async def restore_session(self, session_id: str) -> None:
+        composer = self.query_one(Composer)
+        try:
+            recovered = self._sessions.recover(session_id)
+        except Exception as error:
+            self._show_error(f"无法恢复会话：{error}")
+            composer.disabled = False
+            composer.focus()
+            self._refresh_status("准备就绪")
+            return
+        cancellation = Cancellation()
+        success = False
+        async for event in self._agent.restore_session(recovered, cancellation):
+            if isinstance(event, ContextUpdated):
+                self._show_context_result(event)
+            elif isinstance(event, SessionRestoreFinished):
+                success = event.success
+                for warning in event.warnings:
+                    self._show_error(warning)
+                if not event.success:
+                    self._show_error(event.detail)
+        if success:
+            self._sessions.activate_session(session_id)
+            await self._render_recovered_history()
+            self._show_error("已恢复历史会话，可继续追问。")
+        composer.disabled = False
+        composer.focus()
+        self._refresh_status("准备就绪")
+
+    async def _render_recovered_history(self) -> None:
+        """将恢复的有效历史补绘到聊天区，便于用户追溯。"""
+        chat = self.query_one("#chat-view", VerticalScroll)
+        if not self._has_started_chat:
+            self.query_one(WelcomePanel).remove()
+            self._has_started_chat = True
+        for message in self._agent.conversation.messages:
+            if message.role == "user":
+                for block in message.blocks:
+                    if isinstance(block, TextContent):
+                        await chat.mount(UserMessage(block.text))
+                    elif isinstance(block, ToolResultContent):
+                        await chat.mount(ToolActivity(block.result))
+            else:
+                text = "\n".join(block.text for block in message.blocks if isinstance(block, TextContent))
+                if text:
+                    assistant = AssistantMessage()
+                    await chat.mount(assistant)
+                    await assistant.append_text(text)
+                    assistant.finish()
+        self._scroll_to_latest(chat)
+
+    def _show_memory_diagnostics(self) -> None:
+        if self._memory is None:
+            return
+        for message in self._memory.drain_diagnostics():
+            self._show_error(message)
 
     def action_cycle_permission_mode(self) -> None:
         """在空闲时循环四档权限模式。"""

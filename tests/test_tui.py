@@ -6,7 +6,7 @@ from textual.widgets import Markdown
 
 from yucode.agent import Agent, ContextUpdated, ToolCallStarted, ToolResultReady
 from yucode.config import ProviderConfig
-from yucode.conversation import Conversation
+from yucode.conversation import Conversation, ConversationEvent
 from yucode.context import ContextAction, ContextResult
 from yucode.permissions import ApprovalChoice, PermissionManager, PermissionMode
 from yucode.providers.base import CacheUsage, ProviderError, StreamCancelled, StreamEvent, Usage
@@ -15,8 +15,9 @@ from yucode.tools.registry import ToolRegistry
 from yucode.tui.app import ChatApp
 from yucode.tui.widgets import (
     AssistantMessage, ChatStatus, Composer, ContextActivity, ErrorMessage, GenerationIndicator,
-    InlinePermissionCard, ModeMenu, PendingToolActivity, ThinkingBox, ToolActivity, WelcomePanel,
+    InlinePermissionCard, ModeMenu, PendingToolActivity, SessionPicker, ThinkingBox, ToolActivity, WelcomePanel,
 )
+from yucode.sessions import SessionManager
 
 
 class FakeProvider:
@@ -369,11 +370,54 @@ def test_tui_mode_menu_filters_and_supports_escape_and_mouse(tmp_path: Path) -> 
 
             prompt.text = "/"
             await pilot.pause(0.1)
-            assert menu.option_count == 2
+            assert menu.option_count == 3
             await pilot.click(menu, offset=(2, 1))
             await pilot.pause(0.1)
             assert "模式:Plan" in str(app.query_one(ChatStatus).render())
             assert prompt.text == ""
+
+    asyncio.run(check())
+
+
+def test_resume_command_without_session_manager_shows_clear_message(tmp_path: Path) -> None:
+    async def check() -> None:
+        app = app_for_test(root=tmp_path)
+        async with app.run_test() as pilot:
+            prompt = app.query_one(Composer)
+            prompt.text = "/resume"
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert "未启用历史恢复" in str(app.query_one(ErrorMessage).render())
+            assert app.query_one(SessionPicker).display is False
+
+    asyncio.run(check())
+
+
+def test_resume_lists_and_restores_a_session(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    store = SessionManager(tmp_path)
+    old_id = store.create_session()
+    store.record_event(ConversationEvent("user", "历史事实"))
+    store.record_event(ConversationEvent("assistant", "历史回答"))
+    store.create_session()
+    registry = ToolRegistry(tmp_path)
+    agent = Agent(provider, Conversation(store.record_event), registry, permissions=PermissionManager(registry.context.root))
+    agent.session_manager = store
+    app = ChatApp(agent, ProviderConfig("anthropic", "claude-test", "https://example.test", "key", True))
+
+    async def check() -> None:
+        async with app.run_test() as pilot:
+            prompt = app.query_one(Composer)
+            prompt.text = "/resume"
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            picker = app.query_one(SessionPicker)
+            assert picker.display is True and picker.get_option_at_index(0).id == old_id
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            assert store.active_session_id == old_id
+            assert "历史事实" in str(agent.conversation.messages)
+            assert prompt.disabled is False
 
     asyncio.run(check())
 

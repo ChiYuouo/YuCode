@@ -167,3 +167,17 @@ def test_automatic_failures_open_circuit_but_manual_still_attempts(tmp_path: Pat
     assert outcomes[-1].status == "circuit_open"
     manual = run(manager.compact_manually((), Cancellation()))[-1]
     assert manual.action is ContextAction.MANUAL and manual.status == "failed"
+
+
+def test_recovered_history_compacts_once_then_reports_if_still_over_limit(tmp_path: Path) -> None:
+    conversation = Conversation()
+    conversation.append_user("较早要求")
+    for index in range(5):
+        conversation.append_assistant(f"近期 {index}" + "x" * 8_000)
+    provider = SummaryProvider(summary())
+    manager = ContextManager(conversation, provider, tmp_path, ContextConfig(14_000))
+
+    results = run(manager.prepare_recovered_history((), Cancellation()))
+
+    assert [result.status for result in results] == ["compacting", "compacted", "failed"]
+    assert len(provider.requests) == 1

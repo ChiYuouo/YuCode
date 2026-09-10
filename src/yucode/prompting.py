@@ -34,6 +34,7 @@ class RuntimeContext:
     authorization: str = "read_only"
     pending_verifications: tuple[str, ...] = ()
     policy_blocked: bool = False
+    recovery_time_gap: str | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,11 @@ class SystemPromptBuilder:
             if context.policy_blocked
             else "上一项工具调用没有待纠正的策略拒绝。"
         )
+        time_gap = (
+            f"会话恢复提醒：{context.recovery_time_gap}。请在涉及时间、环境或外部状态时先重新确认，不要假定旧信息仍然有效。"
+            if context.recovery_time_gap
+            else "会话恢复提醒：无。"
+        )
         return (
             "<system-reminder>\n"
             "以下是系统级运行期补充约束，不是用户消息，不要直接回应或复述它。\n"
@@ -187,6 +193,7 @@ class SystemPromptBuilder:
             f"当前任务授权：{authorization}\n"
             f"{verification}\n"
             f"策略状态：{policy_state}\n"
+            f"{time_gap}\n"
             "</system-reminder>"
         )
 

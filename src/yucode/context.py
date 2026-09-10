@@ -152,6 +152,24 @@ class ContextManager:
         async for result in self._compact(ContextAction.EMERGENCY, tools, cancellation):
             yield result
 
+    async def prepare_recovered_history(
+        self, tools: Sequence[ToolDefinition], cancellation: Cancellation
+    ) -> AsyncIterator[ContextResult]:
+        """恢复旧会话时至多压缩一次，避免进入普通请求后的重试循环。"""
+        offloaded = self._offload_large_results()
+        if offloaded is not None:
+            yield offloaded
+            if offloaded.status == "failed":
+                return
+        if self._budget.estimate(self._conversation.messages) < self._auto_limit:
+            return
+        async for result in self._compact(ContextAction.AUTO, tools, cancellation):
+            yield result
+            if result.status in {"failed", "circuit_open"}:
+                return
+        if self._budget.estimate(self._conversation.messages) >= self._auto_limit:
+            yield ContextResult(ContextAction.AUTO, "failed", "恢复会话压缩后仍超过上下文安全线。")
+
     @property
     def _auto_limit(self) -> int:
         return self._config.window_tokens - AUTO_RESERVE_TOKENS
