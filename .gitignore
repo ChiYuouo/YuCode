@@ -6,3 +6,6 @@ dist/
 *.egg-info/
 yucode.yaml
 yucode.permissions.local.yaml
+.yucode
+.workbuddy
+YUCODE.md
