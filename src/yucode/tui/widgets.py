@@ -103,7 +103,7 @@ class ChatStatus(Static):
         super().__init__(id="status-bar", markup=False)
         self._provider = provider
         self._model = model
-        self._mode = "Do"
+        self._mode = "[DEFAULT]"
         self.set_values("准备就绪", 0, 0, 0, CacheUsage())
 
     def set_mode(self, mode: str) -> None:
@@ -201,6 +201,13 @@ class ModeMenu(OptionList):
     def hide(self) -> None:
         self.display = False
 
+    def show_commands(self, commands) -> None:
+        """以统一命令登记显示 Tab 的多个候选。"""
+        options = [Option(f"/{item.name}  ·  {item.description}", id=item.name) for item in commands]
+        self.set_options(options)
+        self.highlighted = 0 if options else None
+        self.display = bool(options)
+
 
 class SessionPicker(ModalScreen[str | None]):
     """以大号弹窗展示当前项目可恢复的历史会话。"""
@@ -246,6 +253,40 @@ class SessionPicker(ModalScreen[str | None]):
             )
             options.append(Option(label, id=item.session_id))
         return options
+
+
+class SessionDeleteConfirm(ModalScreen[bool]):
+    """删除会话前的显式二次确认。"""
+
+    BINDINGS = [("escape", "cancel", "取消")]
+
+    def __init__(self, session_id: str, detail: str) -> None:
+        super().__init__(classes="session-picker-screen")
+        self._session_id = session_id
+        self._detail = detail
+
+    def compose(self) -> ComposeResult:
+        yield Container(
+            Static("确认删除会话", id="session-picker-title"),
+            Static(f"{self._session_id}\n{self._detail}\n删除后无法通过会话恢复找回。", id="session-picker-hint"),
+            OptionList(
+                Option("取消", id="cancel"),
+                Option("确认删除", id="confirm"),
+                id="session-picker-list", compact=False, markup=False,
+            ),
+            Static("默认取消 · Esc 取消", id="session-picker-footer"),
+            id="session-picker-dialog",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#session-picker-list", OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.dismiss(event.option_id == "confirm")
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
 class GenerationIndicator(Static):

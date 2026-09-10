@@ -74,6 +74,10 @@ class TokenBudgetTracker:
             return _chars_to_tokens(current_chars)
         return max(0, self._input_tokens + _chars_to_tokens(current_chars - self._history_chars))
 
+    def reset(self) -> None:
+        self._input_tokens = None
+        self._history_chars = 0
+
 
 class ContextArtifactStore:
     """保存可由 read_file 重读的本会话工具输出。"""
@@ -117,6 +121,16 @@ class ContextManager:
 
     def record_model_usage(self, usage: Usage) -> None:
         self._budget.record_usage(self._conversation.messages, usage.input_tokens)
+
+    def estimated_tokens(self) -> int:
+        """返回当前历史的估算 Token，供状态命令显示。"""
+        return self._budget.estimate(self._conversation.messages)
+
+    def reset_conversation_state(self) -> None:
+        """切换会话后重置估算与自动压缩状态，不删除共享外置结果。"""
+        self._budget.reset()
+        self._automatic_failures = 0
+        self._automatic_circuit_open = False
 
     async def prepare_request(
         self, tools: Sequence[ToolDefinition], cancellation: Cancellation

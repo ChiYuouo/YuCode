@@ -111,6 +111,22 @@ class SessionManager:
             summaries.append(recovered.summary)
         return tuple(sorted(summaries, key=lambda item: item.last_active_at, reverse=True))
 
+    def get_summary(self, session_id: str) -> SessionSummary:
+        return self.recover(session_id).summary
+
+    def delete_session(self, session_id: str) -> None:
+        """删除一个非当前活动会话的单个存档。"""
+        session_id = _validated_session_id(session_id)
+        if session_id == self._active_session_id:
+            raise SessionError("不能删除当前会话，请先新建或恢复其他会话。")
+        path = self._path_for(session_id)
+        if not path.is_file():
+            raise SessionError("找不到指定会话。")
+        try:
+            path.unlink()
+        except OSError as error:
+            raise SessionError(f"无法删除会话：{error}") from error
+
     def recover(self, session_id: str) -> RecoveredSession:
         """恢复一个会话；单行损坏不会影响其余可信记录。"""
         path = self._path_for(_validated_session_id(session_id))
@@ -178,6 +194,10 @@ class SessionManager:
         if pending is not None:
             warnings.append(f"会话第 {pending[2]} 行的工具调用没有匹配结果，已截断后续历史。")
         if not conversation.messages or last_active is None:
+            if not records and not any(line.strip() for line in lines):
+                timestamp = _session_id_time(session_id)
+                summary = SessionSummary(session_id, "空会话", timestamp, 0)
+                return RecoveredSession(summary, (), timestamp, tuple(warnings))
             raise SessionError("会话没有可恢复的有效消息。")
         title = _title_from_messages(conversation.messages)
         summary = SessionSummary(session_id, title, last_active, len(conversation.messages))

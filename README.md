@@ -8,6 +8,33 @@ YuCode 是一个支持 OpenAI 与 Anthropic Claude 流式对话的终端 AI 助�
 yucode
 ```
 
+## 斜杠命令
+
+输入以 `/` 开头的命令会直接由 YuCode 处理，不会作为普通聊天交给模型。输入命令名前缀后按 Tab：单个匹配会直接补全，多个匹配会显示候选；`/?` 是 `/help` 的别名。
+
+| 命令 | 作用 |
+| --- | --- |
+| `/help [命令]` | 查看全部命令或某条命令的用法。 |
+| `/compact` | 手动压缩较早的对话上下文，会使用摘要模型并消耗 Token。 |
+| `/clear` | 清空聊天显示，保留当前对话上下文和会话。 |
+| `/plan`、`/do` | 进入计划模式，或回到默认模式。 |
+| `/session` | 查看当前会话 ID 和消息数。 |
+| `/memory [要求]` | 请 AI 查看并梳理当前项目记忆。 |
+| `/permission [模式]` | 查看或切换 `default`、`accept_edits`、`plan`、`bypass_permissions`。 |
+| `/status` | 查看模型、模式、会话、上下文估算及最近一轮 Token。 |
+| `/review [重点]` | 请 AI 只读审查当前工作区改动。 |
+
+会话管理使用以下子命令：
+
+```text
+/session list
+/session new
+/session resume <会话 ID>
+/session delete <会话 ID>
+```
+
+`/session new` 才会创建干净对话；`/clear` 只清屏。删除非当前会话时会显示二次确认，当前会话需要先切换。此前的 `/resume` 已迁移为 `/session resume <会话 ID>`。`/exit` 与 `/quit` 仍可退出，但不会出现在帮助或补全中。
+
 ## 上下文管理
 
 YuCode 会在每次模型请求前先外置过大的工具输出，再在接近上下文窗口时生成结构化摘要。默认窗口为 128000 Token，可在 `yucode.yaml` 中配置：

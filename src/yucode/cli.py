@@ -7,6 +7,8 @@ from pathlib import Path
 from rich.console import Console
 
 from yucode.agent import Agent
+from yucode.commands import build_builtin_registry
+from yucode.commands.models import CommandRegistrationError
 from yucode.context import ContextManager
 from yucode.config import ConfigError, ProviderConfig, load_config
 from yucode.conversation import Conversation
@@ -26,6 +28,11 @@ from yucode.tui.app import ChatApp
 def main() -> None:
     """从当前目录读取配置后启动交互会话。"""
     console = Console()
+    try:
+        command_registry = build_builtin_registry()
+    except CommandRegistrationError as error:
+        console.print(f"命令配置错误：{error}", style="red")
+        raise SystemExit(1) from error
     try:
         config = load_config()
     except ConfigError as error:
@@ -58,6 +65,7 @@ def main() -> None:
     )
     agent.mcp_manager = MCPManager(config.mcp_servers, config.mcp_issues)
     agent.session_manager = sessions
+    agent.command_registry = command_registry
     agent.startup_warnings = (*loaded_instructions.warnings, *memory.drain_diagnostics())
     ChatApp(agent, config.provider).run()
 

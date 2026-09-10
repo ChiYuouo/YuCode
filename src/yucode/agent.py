@@ -158,6 +158,16 @@ class Agent:
     def permissions(self) -> PermissionManager:
         return self._permissions
 
+    def estimated_context_tokens(self) -> int:
+        return self._context.estimated_tokens()
+
+    def reset_session_state(self) -> None:
+        """新会话只清空对话相关状态，保留权限和长时组件。"""
+        self._conversation.replace_for_recovery(())
+        self._context.reset_conversation_state()
+        self._recovery_time_gap = None
+        self._recovery_context_guard = False
+
     async def compact(self, cancellation: Cancellation) -> AsyncIterator[AgentEvent]:
         """执行不进入普通对话的手动上下文压缩。"""
         tools = self._registry.read_only_definitions if self._permissions.mode is PermissionMode.PLAN else self._registry.definitions
