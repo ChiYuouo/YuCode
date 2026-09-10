@@ -8,8 +8,9 @@ from pathlib import Path
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Container, Vertical
 from textual.message import Message
+from textual.screen import ModalScreen
 from textual.widgets import Collapsible, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
@@ -201,26 +202,50 @@ class ModeMenu(OptionList):
         self.display = False
 
 
-class SessionPicker(OptionList):
-    """展示当前项目可恢复的历史会话。"""
+class SessionPicker(ModalScreen[str | None]):
+    """以大号弹窗展示当前项目可恢复的历史会话。"""
 
-    def __init__(self) -> None:
-        super().__init__(id="session-picker", classes="mode-menu", compact=True)
-        self.display = False
+    BINDINGS = [("escape", "cancel", "取消")]
 
-    def show_sessions(self, sessions: Sequence[SessionSummary]) -> None:
-        self.set_options([
-            Option(
-                f"{item.session_id}  ·  {item.title}  ·  {item.last_active_at.astimezone():%Y-%m-%d %H:%M}  ·  {item.message_count} 条",
-                id=item.session_id,
+    def __init__(self, sessions: Sequence[SessionSummary]) -> None:
+        super().__init__(classes="session-picker-screen")
+        self._sessions = tuple(sessions)
+
+    def compose(self) -> ComposeResult:
+        yield Container(
+            Static("恢复历史会话", id="session-picker-title"),
+            Static("选择后按 Enter 恢复 · ↑/↓ 移动 · PageUp/PageDown 翻页 · Esc 取消", id="session-picker-hint"),
+            OptionList(*self._options(), id="session-picker-list", compact=False, markup=False),
+            Static(f"共 {len(self._sessions)} 个可恢复会话", id="session-picker-footer"),
+            id="session-picker-dialog",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#session-picker-list", OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """选择会话后将 ID 返回给主聊天界面。"""
+        event.stop()
+        if event.option_id is not None:
+            self.dismiss(event.option_id)
+
+    def action_cancel(self) -> None:
+        """不恢复任何会话并返回输入框。"""
+        self.dismiss(None)
+
+    def _options(self) -> list[Option]:
+        """将会话摘要渲染为标题与元数据两行。"""
+        options: list[Option] = []
+        for item in self._sessions:
+            label = Text()
+            label.append(item.title, style="bold #edf4f5")
+            label.append(
+                f"\n{item.session_id}  ·  {item.last_active_at.astimezone():%Y-%m-%d %H:%M}"
+                f"  ·  {item.message_count} 条消息",
+                style="#9cadb0",
             )
-            for item in sessions
-        ])
-        self.highlighted = 0 if sessions else None
-        self.display = bool(sessions)
-
-    def hide(self) -> None:
-        self.display = False
+            options.append(Option(label, id=item.session_id))
+        return options
 
 
 class GenerationIndicator(Static):
@@ -286,6 +311,15 @@ class ErrorMessage(Static):
         message = Text("! 请求失败：", style="bold #ff8170")
         message.append(content, style="#ffb4a9")
         super().__init__(message, classes="message error-message")
+
+
+class NoticeMessage(Static):
+    """显示不属于错误的普通状态提示。"""
+
+    def __init__(self, content: str) -> None:
+        message = Text("✓ ", style="bold #7ee787")
+        message.append(content, style="#c8d2d5")
+        super().__init__(message, classes="message notice-message")
 
 
 class ContextActivity(Static):

@@ -27,6 +27,7 @@ from yucode.tui.widgets import (
     ErrorMessage,
     InlinePermissionCard,
     ModeMenu, SessionPicker,
+    NoticeMessage,
     PendingToolActivity,
     SPINNER_FRAMES,
     ToolActivity,
@@ -97,7 +98,6 @@ class ChatApp(App[None]):
             WelcomePanel(self._config.protocol, self._config.model), id="chat-view"
         )
         yield ModeMenu()
-        yield SessionPicker()
         yield Composer(
             placeholder="输入消息…  Enter 发送 · Shift+Enter 换行 · Shift+Tab 切换权限", id="prompt", soft_wrap=True
         )
@@ -224,8 +224,6 @@ class ChatApp(App[None]):
         event.stop()
         if event.option_list.id == "mode-menu" and event.option_id is not None:
             self._activate_mode(event.option_id)
-        elif event.option_list.id == "session-picker" and event.option_id is not None:
-            self._begin_restore(event.option_id)
 
     def _update_mode_menu(self, text: str) -> None:
         menu = self.query_one(ModeMenu)
@@ -282,14 +280,21 @@ class ChatApp(App[None]):
             self._show_error("当前项目没有可恢复的历史会话。")
             composer.focus()
             return
-        picker = self.query_one(SessionPicker)
-        picker.show_sessions(summaries)
         composer.disabled = True
-        picker.focus()
+        self.push_screen(SessionPicker(summaries), self._on_resume_picker_closed)
         self._refresh_status("选择要恢复的历史会话 · Esc 取消")
 
+    def _on_resume_picker_closed(self, session_id: str | None) -> None:
+        """处理历史选择弹窗的确认或取消结果。"""
+        composer = self.query_one(Composer)
+        if session_id is None:
+            composer.disabled = False
+            composer.focus()
+            self._refresh_status("准备就绪")
+            return
+        self._begin_restore(session_id)
+
     def _begin_restore(self, session_id: str) -> None:
-        self.query_one(SessionPicker).hide()
         self._refresh_status("正在恢复历史会话")
         self.restore_session(session_id)
 
@@ -318,7 +323,7 @@ class ChatApp(App[None]):
         if success:
             self._sessions.activate_session(session_id)
             await self._render_recovered_history()
-            self._show_error("已恢复历史会话，可继续追问。")
+            self._show_notice("已恢复历史会话，可继续追问。")
         composer.disabled = False
         composer.focus()
         self._refresh_status("准备就绪")
@@ -586,6 +591,11 @@ class ChatApp(App[None]):
         chat.mount(ErrorMessage(content))
         self._scroll_to_latest(chat)
 
+    def _show_notice(self, content: str) -> None:
+        chat = self.query_one("#chat-view", VerticalScroll)
+        chat.mount(NoticeMessage(content))
+        self._scroll_to_latest(chat)
+
     def _refresh_status(self, state: str) -> None:
         totals_cache = self._totals.cache_usage()
         cache = CacheUsage(
@@ -602,7 +612,9 @@ class ChatApp(App[None]):
         )
 
     def _scroll_to_latest(self, chat: VerticalScroll) -> None:
-        self.call_after_refresh(chat.scroll_end, animate=False)
+        """仅在用户原本停留在底部时跟随新增内容。"""
+        if chat.is_vertical_scroll_end:
+            self.call_after_refresh(chat.scroll_end, animate=False)
 
 
 def _context_text(result) -> str:

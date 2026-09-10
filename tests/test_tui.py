@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 from textual.containers import VerticalScroll
-from textual.widgets import Markdown
+from textual.widgets import Markdown, OptionList
 
 from yucode.agent import Agent, ContextUpdated, ToolCallStarted, ToolResultReady
 from yucode.config import ProviderConfig
@@ -14,7 +14,7 @@ from yucode.tools.base import ToolCall, ToolResult
 from yucode.tools.registry import ToolRegistry
 from yucode.tui.app import ChatApp
 from yucode.tui.widgets import (
-    AssistantMessage, ChatStatus, Composer, ContextActivity, ErrorMessage, GenerationIndicator,
+    AssistantMessage, ChatStatus, Composer, ContextActivity, ErrorMessage, GenerationIndicator, NoticeMessage,
     InlinePermissionCard, ModeMenu, PendingToolActivity, SessionPicker, ThinkingBox, ToolActivity, WelcomePanel,
 )
 from yucode.sessions import SessionManager
@@ -150,12 +150,14 @@ def test_tui_shift_enter_and_thinking_layout() -> None:
     asyncio.run(check())
 
 
-def test_tui_streaming_follows_latest_content() -> None:
+def test_tui_streaming_only_follows_latest_while_viewing_the_bottom() -> None:
     class LongProvider:
         async def stream(self, _request, cancellation):
             yield StreamEvent("text", "第一段内容\n" * 20)
             await asyncio.sleep(0.2)
             yield StreamEvent("text", "第二段内容\n" * 20)
+            await asyncio.sleep(0.2)
+            yield StreamEvent("text", "第三段内容\n" * 20)
 
     async def check() -> None:
         app = app_for_test(LongProvider())
@@ -167,7 +169,11 @@ def test_tui_streaming_follows_latest_content() -> None:
             chat = app.query_one("#chat-view", VerticalScroll)
             assert chat.max_scroll_y > 0
             chat.scroll_home(animate=False)
-            await pilot.pause(0.3)
+            await pilot.pause(0.2)
+            assert chat.scroll_y < chat.max_scroll_y
+
+            chat.scroll_end(animate=False)
+            await pilot.pause(0.2)
             assert chat.scroll_y == chat.max_scroll_y
 
     asyncio.run(check())
@@ -388,7 +394,7 @@ def test_resume_command_without_session_manager_shows_clear_message(tmp_path: Pa
             await pilot.press("enter")
             await pilot.pause(0.1)
             assert "未启用历史恢复" in str(app.query_one(ErrorMessage).render())
-            assert app.query_one(SessionPicker).display is False
+            assert not isinstance(app.screen, SessionPicker)
 
     asyncio.run(check())
 
@@ -411,12 +417,93 @@ def test_resume_lists_and_restores_a_session(tmp_path: Path) -> None:
             prompt.text = "/resume"
             await pilot.press("enter")
             await pilot.pause(0.1)
-            picker = app.query_one(SessionPicker)
-            assert picker.display is True and picker.get_option_at_index(0).id == old_id
+            picker = app.screen
+            assert isinstance(picker, SessionPicker)
+            option_list = picker.query_one("#session-picker-list", OptionList)
+            assert option_list.get_option_at_index(0).id == old_id
             await pilot.press("enter")
             await pilot.pause(0.3)
             assert store.active_session_id == old_id
             assert "历史事实" in str(agent.conversation.messages)
+            assert prompt.disabled is False
+            assert "已恢复历史会话，可继续追问。" in str(app.query_one(NoticeMessage).render())
+            assert not app.query(ErrorMessage)
+
+    asyncio.run(check())
+
+
+def test_resume_picker_uses_a_large_scrollable_modal_and_page_navigation(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    store = SessionManager(tmp_path)
+    for index in range(12):
+        store.create_session()
+        store.record_event(ConversationEvent("user", f"需要恢复的历史会话 {index}"))
+        store.record_event(ConversationEvent("assistant", f"历史回答 {index}"))
+    registry = ToolRegistry(tmp_path)
+    agent = Agent(provider, Conversation(store.record_event), registry, permissions=PermissionManager(registry.context.root))
+    agent.session_manager = store
+    app = ChatApp(agent, ProviderConfig("anthropic", "claude-test", "https://example.test", "key", True))
+
+    async def check() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one(Composer)
+            prompt.text = "/resume"
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+
+            picker = app.screen
+            assert isinstance(picker, SessionPicker)
+            dialog = picker.query_one("#session-picker-dialog")
+            option_list = picker.query_one("#session-picker-list", OptionList)
+            assert dialog.size.height >= 28
+            assert option_list.option_count == 12
+            assert "\n" in str(option_list.get_option_at_index(0).prompt)
+            assert "条消息" in str(option_list.get_option_at_index(0).prompt)
+
+            await pilot.press("pagedown")
+            assert option_list.highlighted is not None and option_list.highlighted > 0
+            await pilot.press("end")
+            selected_id = option_list.get_option_at_index(option_list.option_count - 1).id
+            await pilot.press("enter")
+            await pilot.pause(0.5)
+            assert store.active_session_id == selected_id
+            assert prompt.disabled is False
+
+    asyncio.run(check())
+
+
+def test_resume_picker_escape_and_mouse_selection(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    store = SessionManager(tmp_path)
+    session_id = store.create_session()
+    store.record_event(ConversationEvent("user", "鼠标选择的历史消息"))
+    store.record_event(ConversationEvent("assistant", "历史回答"))
+    registry = ToolRegistry(tmp_path)
+    agent = Agent(provider, Conversation(store.record_event), registry, permissions=PermissionManager(registry.context.root))
+    agent.session_manager = store
+    app = ChatApp(agent, ProviderConfig("anthropic", "claude-test", "https://example.test", "key", True))
+
+    async def check() -> None:
+        async with app.run_test(size=(120, 40)) as pilot:
+            prompt = app.query_one(Composer)
+            prompt.text = "/resume"
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            assert isinstance(app.screen, SessionPicker)
+            await pilot.press("escape")
+            await pilot.pause(0.1)
+            assert not isinstance(app.screen, SessionPicker)
+            assert prompt.disabled is False
+
+            prompt.text = "/resume"
+            await pilot.press("enter")
+            await pilot.pause(0.1)
+            picker = app.screen
+            assert isinstance(picker, SessionPicker)
+            option_list = picker.query_one("#session-picker-list", OptionList)
+            await pilot.click(option_list, offset=(2, 1))
+            await pilot.pause(0.5)
+            assert store.active_session_id == session_id
             assert prompt.disabled is False
 
     asyncio.run(check())
