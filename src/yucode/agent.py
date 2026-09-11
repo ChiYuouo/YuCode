@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 
@@ -18,7 +18,9 @@ from yucode.permissions import (
     SensitiveDataRedactor,
     classify_authorization,
 )
-from yucode.prompting import RuntimeContext, SystemPromptBuilder
+from yucode.prompting import RuntimeContext, RuntimeMessage, SystemPromptBuilder
+from yucode.hooks.engine import HookEngine
+from yucode.hooks.models import HookContext, HookEvent
 from yucode.providers.base import Provider, ProviderError, StreamCancelled, Usage
 from yucode.tools.base import ToolCall, ToolResult
 from yucode.tools.executor import ToolExecutor
@@ -138,6 +140,7 @@ class Agent:
         context_manager: ContextManager | None = None,
         memory_manager: MemoryManager | None = None,
         skill_runtime: SkillRuntime | None = None,
+        hook_engine: HookEngine | None = None,
     ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations 必须是正整数。")
@@ -145,7 +148,8 @@ class Agent:
         self._conversation = conversation
         self._registry = registry
         self._permissions = permissions or PermissionManager(registry.context.root)
-        self._executor = ToolExecutor(registry, self._permissions)
+        self._hooks = hook_engine
+        self._executor = ToolExecutor(registry, self._permissions, hook_engine)
         self._max_iterations = max_iterations
         self._prompt_builder = prompt_builder or SystemPromptBuilder()
         self._redactor = SensitiveDataRedactor()
@@ -184,6 +188,8 @@ class Agent:
         view, _state = self._skill_view()
         tools = view.read_only_definitions if self._permissions.mode is PermissionMode.PLAN else view.definitions
         async for result in self._context.compact_manually(tools, cancellation):
+            if self._hooks is not None and result.status == "compacted":
+                await self._hooks.run_hooks(HookContext(HookEvent.COMPACT))
             yield ContextUpdated(result)
 
     async def restore_session(
@@ -218,6 +224,9 @@ class Agent:
         approve: ApprovalCallback | None = None,
     ) -> AsyncIterator[AgentEvent]:
         turn_start = len(self._conversation.messages)
+        if self._hooks is not None:
+            await self._hooks.run_hooks(HookContext(HookEvent.TURN_START, message=text))
+            await self._hooks.run_hooks(HookContext(HookEvent.PRE_SEND, message=text))
         self._conversation.append_user(text)
         total = Usage()
         visible_parts: list[str] = []
@@ -264,6 +273,10 @@ class Agent:
                     self._conversation.messages,
                     skill_state,
                 )
+                if self._hooks is not None:
+                    prompts = self._hooks.drain_prompts()
+                    if prompts:
+                        request = replace(request, runtime_messages=(*request.runtime_messages, *(RuntimeMessage(item) for item in prompts)))
                 self._recovery_time_gap = None
                 self._recovery_context_guard = False
                 async for event in self._provider.stream(request, cancellation):
@@ -295,6 +308,8 @@ class Agent:
                     yield event
                 return
             except Exception as error:
+                if self._hooks is not None:
+                    await self._hooks.run_hooks(HookContext(HookEvent.ERROR, error=str(error)))
                 if (
                     isinstance(error, ProviderError)
                     and _is_context_limit_error(error)
@@ -340,6 +355,7 @@ class Agent:
                     verification_misses += 1
                     continue
                 self._conversation.append_assistant(response.text)
+                if self._hooks is not None: await self._hooks.run_hooks(HookContext(HookEvent.POST_RECEIVE, message=response.text))
                 if self._memory is not None:
                     self._memory.schedule_update(self._conversation.messages[turn_start:])
                 async for event in self._finish(StopReason.COMPLETED, visible_parts, total, iteration, "任务已完成。"):
@@ -414,6 +430,8 @@ class Agent:
         detail: str,
         error: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        if self._hooks is not None:
+            await self._hooks.run_hooks(HookContext(HookEvent.TURN_END, error=error or ""))
         yield ProgressUpdated(iteration, self._max_iterations, ProgressPhase.STOPPED, detail)
         yield AgentFinished(reason, "".join(visible_parts), usage, error)
 

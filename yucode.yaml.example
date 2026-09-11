@@ -11,6 +11,19 @@ thinking:
 context:
   window_tokens: 128000
 
+# Hook 自动化规则示例。$EVENT、$TOOL_NAME、$FILE_PATH、$MESSAGE、$ERROR 与
+# $TOOL_ARGS.xxx 会在动作执行前替换；可使用 once、async 和 timeout_seconds。
+# hooks:
+#   - event: pre_tool_use
+#     if:
+#       all:
+#         - field: TOOL_NAME
+#           operator: "=="
+#           value: run_command
+#     action:
+#       type: prompt
+#       prompt: "即将调用 $TOOL_NAME，请确认命令参数：$TOOL_ARGS.command"
+
 # 权限模式：default（未命中副作用请求确认）、acceptEdits（自动接受项目内编辑）、
 # plan（只读）或 bypassPermissions（跳过未命中确认）。Shift+Tab 可在会话中切换。
 permissions:

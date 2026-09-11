@@ -11,11 +11,14 @@ from yucode.permissions import PermissionManager, PermissionOutcome, TaskAuthori
 from yucode.tools.base import ToolCall, ToolCatalog, ToolContext, ToolResult, ToolSafety
 from yucode.tools.registry import ToolRegistry
 from yucode.workflow import ToolWorkflow
+from yucode.hooks.engine import HookEngine
+from yucode.hooks.models import HookContext, HookEvent, ToolRejectedError
 
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry, permissions: PermissionManager | None = None) -> None:
+    def __init__(self, registry: ToolRegistry, permissions: PermissionManager | None = None, hook_engine: HookEngine | None = None) -> None:
         self._registry = registry
         self._permissions = permissions or PermissionManager(registry.context.root)
+        self._hooks = hook_engine
 
     async def execute(
         self,
@@ -27,6 +30,14 @@ class ToolExecutor:
         tools: ToolCatalog | None = None,
     ) -> ToolResult:
         catalog = tools or self._registry
+        context = HookContext(HookEvent.PRE_TOOL_USE, tool_name=call.name, tool_args=call.arguments)
+        try:
+            if self._hooks is not None:
+                await self._hooks.run_pre_tool_hooks(context)
+        except ToolRejectedError as error:
+            result = _failure(call, str(error), "hook_rejected")
+            if self._hooks is not None: await self._hooks.run_hooks(HookContext(HookEvent.POST_TOOL_USE, tool_name=call.name, tool_args=call.arguments))
+            return result
         tool = catalog.get(call.name)
         if tool is None:
             return _failure(call, f"未知工具：{call.name}。", "unknown_tool")
@@ -35,15 +46,23 @@ class ToolExecutor:
         decision = self._permissions.evaluate(call, tool, authorization, workflow)
         if decision.outcome is PermissionOutcome.ASK:
             request = self._permissions.request_for(call)
+            if self._hooks is not None: await self._hooks.run_hooks(HookContext(HookEvent.PERMISSION_REQUEST, tool_name=call.name, tool_args=call.arguments))
             decision = await self._permissions.resolve_prompt(request, approve)
         if decision.outcome is PermissionOutcome.DENY:
             return _failure(call, decision.reason, decision.error_code or "permission_rejected")
         try:
+            if self._hooks is not None and call.name == "run_command":
+                await self._hooks.run_hooks(HookContext(HookEvent.COMMAND_EXECUTE, tool_name=call.name, tool_args=call.arguments))
             context = ToolContext(catalog.context.root, approve, authorization)
             result = await tool.execute(call.arguments, context, call.id, cancellation)
         except Exception as error:  # 工具边界必须把所有意外错误转为模型可处理结果。
             result = _failure(call, f"工具执行异常：{error}", "tool_exception")
         workflow.record(result)
+        if self._hooks is not None:
+            if result.success and call.name in {"write_file", "edit_file"}:
+                path = call.arguments.get("path")
+                await self._hooks.run_hooks(HookContext(HookEvent.FILE_CHANGE, tool_name=call.name, file_path=path if isinstance(path, str) else "", tool_args=call.arguments))
+            await self._hooks.run_hooks(HookContext(HookEvent.POST_TOOL_USE, tool_name=call.name, tool_args=call.arguments))
         return result
 
     async def execute_many(

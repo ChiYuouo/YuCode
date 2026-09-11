@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import yaml
 
 from yucode.permissions import PermissionMode
+from yucode.hooks.loader import load_hooks
+from yucode.hooks.models import Hook
 
 
 class ConfigError(ValueError):
@@ -81,6 +83,7 @@ class AppConfig:
     permissions: PermissionConfig = PermissionConfig()
     mcp_servers: tuple[MCPServerConfig, ...] = ()
     mcp_issues: tuple[MCPConfigIssue, ...] = ()
+    hooks: tuple[Hook, ...] = ()
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -111,6 +114,10 @@ def load_config(path: Path | None = None) -> AppConfig:
     agent = _parse_agent(raw.get("agent"))
     context = _parse_context(raw.get("context"))
     permissions = _parse_permissions(raw.get("permissions"))
+    try:
+        hooks = load_hooks(raw.get("hooks"))
+    except ValueError as error:
+        raise ConfigError(f"Hook 配置错误：{error}") from error
 
     if protocol == "openai" and thinking_enabled:
         raise ConfigError("thinking.enabled 仅支持 anthropic 协议。")
@@ -129,6 +136,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         permissions=permissions,
         mcp_servers=servers,
         mcp_issues=issues,
+        hooks=hooks,
     )
 
 
