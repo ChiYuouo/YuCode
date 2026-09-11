@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Sequence
 
 from yucode.providers.base import Message
+from yucode.skills.prompt import SkillPromptState
 from yucode.tools.base import ToolDefinition
 
 
@@ -73,11 +74,15 @@ class SystemPromptBuilder:
         context: RuntimeContext,
         tools: Sequence[ToolDefinition],
         history: Sequence[Message],
+        skill_state: SkillPromptState | None = None,
     ) -> ModelRequest:
         """构造一次调用的稳定前缀与运行期消息。"""
         enhanced_tools = self.enhance_tools(tools)
-        stable_instructions = "\n\n".join(module.content for module in self._stable_modules(context.mode))
-        runtime = RuntimeMessage(self._runtime_reminder(context))
+        stable_instructions = "\n\n".join(module.content for module in self._stable_modules(context.mode, skill_state))
+        runtime_content = self._runtime_reminder(context)
+        if skill_state is not None and skill_state.suggested_tools_text:
+            runtime_content = f"{runtime_content}\n{skill_state.suggested_tools_text}"
+        runtime = RuntimeMessage(runtime_content)
         return ModelRequest(
             history=tuple(history),
             stable_instructions=stable_instructions,
@@ -93,7 +98,7 @@ class SystemPromptBuilder:
             for tool in tools
         )
 
-    def _stable_modules(self, mode: str) -> tuple[PromptModule, ...]:
+    def _stable_modules(self, mode: str, skill_state: SkillPromptState | None = None) -> tuple[PromptModule, ...]:
         is_plan = mode == "plan"
         task_mode = (
             "任务模式：规划模式。你只能探索上下文并输出计划；实际可用能力由工具列表决定。"
@@ -129,12 +134,19 @@ class SystemPromptBuilder:
                 True,
             ),
         )
+        active = PromptModule("active_skills", skill_state.active_text if skill_state else "", True)
+        catalog = PromptModule("available_skills", skill_state.catalog_text if skill_state else "", True)
         optional = (
+            active,
+            catalog,
             PromptModule("custom_instructions", self._custom_instructions, True),
-            PromptModule("active_skills", "\n".join(self._active_skills), True),
+            PromptModule("legacy_active_skills", "\n".join(self._active_skills), True),
             PromptModule("long_term_memory", self._long_term_memory, True),
         )
-        return tuple(module for module in (*fixed, *optional) if module.content)
+        # 已激活 SOP 紧接固定系统约束；目录摘要随后才与普通项目指令并列。
+        leading = fixed[:2]
+        trailing = fixed[2:]
+        return tuple(module for module in (*leading, active, *trailing, catalog, *optional[2:]) if module.content)
 
     @staticmethod
     def _enhanced_description(tool: ToolDefinition) -> str:

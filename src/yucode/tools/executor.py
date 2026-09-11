@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from yucode.cancellation import Cancellation
 from yucode.permissions import ApprovalCallback as PermissionApprovalCallback
 from yucode.permissions import PermissionManager, PermissionOutcome, TaskAuthorization
-from yucode.tools.base import ToolCall, ToolResult, ToolSafety
+from yucode.tools.base import ToolCall, ToolCatalog, ToolContext, ToolResult, ToolSafety
 from yucode.tools.registry import ToolRegistry
 from yucode.workflow import ToolWorkflow
 
@@ -24,8 +24,10 @@ class ToolExecutor:
         authorization: TaskAuthorization,
         workflow: ToolWorkflow,
         approve: PermissionApprovalCallback | None = None,
+        tools: ToolCatalog | None = None,
     ) -> ToolResult:
-        tool = self._registry.get(call.name)
+        catalog = tools or self._registry
+        tool = catalog.get(call.name)
         if tool is None:
             return _failure(call, f"未知工具：{call.name}。", "unknown_tool")
         if not isinstance(call.arguments, Mapping):
@@ -37,7 +39,8 @@ class ToolExecutor:
         if decision.outcome is PermissionOutcome.DENY:
             return _failure(call, decision.reason, decision.error_code or "permission_rejected")
         try:
-            result = await tool.execute(call.arguments, self._registry.context, call.id, cancellation)
+            context = ToolContext(catalog.context.root, approve, authorization)
+            result = await tool.execute(call.arguments, context, call.id, cancellation)
         except Exception as error:  # 工具边界必须把所有意外错误转为模型可处理结果。
             result = _failure(call, f"工具执行异常：{error}", "tool_exception")
         workflow.record(result)
@@ -50,15 +53,17 @@ class ToolExecutor:
         authorization: TaskAuthorization,
         workflow: ToolWorkflow,
         approve: PermissionApprovalCallback | None = None,
+        tools: ToolCatalog | None = None,
     ) -> list[ToolResult]:
         """按顺序屏障执行调用，并始终返回与输入同序的结果。"""
         results: list[ToolResult | None] = [None] * len(calls)
-        for indexes in self._batches(calls):
+        catalog = tools or self._registry
+        for indexes in self._batches(calls, catalog):
             if cancellation.is_cancelled:
                 break
             batch = await asyncio.gather(
                 *(
-                    self.execute(calls[index], cancellation, authorization, workflow, approve)
+                    self.execute(calls[index], cancellation, authorization, workflow, approve, catalog)
                     for index in indexes
                 )
             )
@@ -69,11 +74,11 @@ class ToolExecutor:
                 results[index] = _failure(calls[index], "用户已取消，工具未执行。", "cancelled")
         return [result for result in results if result is not None]
 
-    def _batches(self, calls: Sequence[ToolCall]) -> list[list[int]]:
+    def _batches(self, calls: Sequence[ToolCall], catalog: ToolCatalog | None = None) -> list[list[int]]:
         batches: list[list[int]] = []
         read_batch: list[int] = []
         for index, call in enumerate(calls):
-            tool = self._registry.get(call.name)
+            tool = (catalog or self._registry).get(call.name)
             if tool is not None and tool.safety is ToolSafety.READ_ONLY:
                 read_batch.append(index)
                 continue

@@ -25,6 +25,9 @@ from yucode.tools.executor import ToolExecutor
 from yucode.tools.registry import ToolRegistry
 from yucode.workflow import ToolWorkflow
 from yucode.sessions import RecoveredSession
+from yucode.skills.prompt import build_skill_prompt_state
+from yucode.skills.runtime import SkillRuntime
+from yucode.skills.tools import InstallSkillTool, LoadSkillTool, build_skill_view
 
 
 class StopReason(str, Enum):
@@ -134,6 +137,7 @@ class Agent:
         permissions: PermissionManager | None = None,
         context_manager: ContextManager | None = None,
         memory_manager: MemoryManager | None = None,
+        skill_runtime: SkillRuntime | None = None,
     ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations 必须是正整数。")
@@ -147,6 +151,8 @@ class Agent:
         self._redactor = SensitiveDataRedactor()
         self._context = context_manager or ContextManager(conversation, provider, registry.context.root)
         self._memory = memory_manager
+        self._skills = skill_runtime
+        self._system_tools = (LoadSkillTool(skill_runtime), InstallSkillTool(skill_runtime)) if skill_runtime is not None else ()
         self._recovery_time_gap: str | None = None
         self._recovery_context_guard = False
 
@@ -167,10 +173,16 @@ class Agent:
         self._context.reset_conversation_state()
         self._recovery_time_gap = None
         self._recovery_context_guard = False
+        self.clear_active_skills()
+
+    def clear_active_skills(self) -> None:
+        if self._skills is not None:
+            self._skills.clear_active()
 
     async def compact(self, cancellation: Cancellation) -> AsyncIterator[AgentEvent]:
         """执行不进入普通对话的手动上下文压缩。"""
-        tools = self._registry.read_only_definitions if self._permissions.mode is PermissionMode.PLAN else self._registry.definitions
+        view, _state = self._skill_view()
+        tools = view.read_only_definitions if self._permissions.mode is PermissionMode.PLAN else view.definitions
         async for result in self._context.compact_manually(tools, cancellation):
             yield ContextUpdated(result)
 
@@ -180,7 +192,8 @@ class Agent:
         """恢复可信历史，并在必要时只执行一次上下文压缩。"""
         previous = self._conversation.messages
         self._conversation.replace_for_recovery(recovered.messages)
-        tools = self._registry.read_only_definitions if self._permissions.mode is PermissionMode.PLAN else self._registry.definitions
+        view, _state = self._skill_view()
+        tools = view.read_only_definitions if self._permissions.mode is PermissionMode.PLAN else view.definitions
         failed = False
         detail = "历史会话已恢复。"
         async for result in self._context.prepare_recovered_history(tools, cancellation):
@@ -195,6 +208,7 @@ class Agent:
         elapsed = datetime.now(UTC) - recovered.last_active_at
         self._recovery_time_gap = _time_gap_reminder(elapsed) if elapsed >= timedelta(hours=24) else None
         self._recovery_context_guard = True
+        self.clear_active_skills()
         yield SessionRestoreFinished(True, detail, recovered.warnings)
 
     async def run(
@@ -231,7 +245,8 @@ class Agent:
             requires_verification = bool(workflow.pending_verifications)
             requires_guarded_response = requires_verification
             try:
-                tools = self._registry.read_only_definitions if is_plan else self._registry.definitions
+                view, skill_state = self._skill_view()
+                tools = view.read_only_definitions if is_plan else view.definitions
                 async for result in self._context.prepare_request(tools, cancellation):
                     yield ContextUpdated(result)
                 recovery_guarded_request = self._recovery_context_guard
@@ -247,6 +262,7 @@ class Agent:
                     ),
                     tools,
                     self._conversation.messages,
+                    skill_state,
                 )
                 self._recovery_time_gap = None
                 self._recovery_context_guard = False
@@ -356,7 +372,7 @@ class Agent:
                 f"第 {iteration}/{self._max_iterations} 轮：正在执行 {len(response.calls)} 个工具",
             )
             results = await self._executor.execute_many(
-                response.calls, cancellation, authorization, workflow, approve
+                response.calls, cancellation, authorization, workflow, approve, view
             )
             results = [self._redactor.redact_result(result) for result in results]
             self._conversation.append_tool_results(results)
@@ -368,7 +384,7 @@ class Agent:
                     yield event
                 return
 
-            known_call_present = any(self._registry.get(call.name) is not None for call in response.calls)
+            known_call_present = any(view.get(call.name) is not None for call in response.calls)
             unknown_rounds = 0 if known_call_present else unknown_rounds + 1
             if unknown_rounds >= 2:
                 async for event in self._finish(
@@ -381,6 +397,13 @@ class Agent:
                 ):
                     yield event
                 return
+
+    def _skill_view(self):
+        if self._skills is None:
+            return self._registry.view(), None
+        snapshot = self._skills.snapshot()
+        view = build_skill_view(self._registry, snapshot, self._system_tools)
+        return view, build_skill_prompt_state(snapshot, tuple(item.name for item in view.definitions))
 
     async def _finish(
         self,

@@ -111,7 +111,7 @@ def test_ch13_t18_do_returns_to_default(tmp_path: Path) -> None:
 
 def test_ch13_t24_help_has_exactly_ten_public_commands(tmp_path: Path) -> None:
     command_context, _ = context(tmp_path)
-    assert len(command_context.registry.visible()) == 10
+    assert len(command_context.registry.visible()) == 11
     assert command_context.registry.get("?").name == "help"
     assert command_context.registry.get("quit").hidden
 

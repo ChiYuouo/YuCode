@@ -60,9 +60,11 @@ class ToolResult:
 
 @dataclass(frozen=True)
 class ToolContext:
-    """每项工具执行时不可变的环境。"""
+    """每项工具执行时的环境；旧工具只需要使用 root。"""
 
     root: Path
+    approval: Any = None
+    authorization: Any = None
 
 
 class Tool(Protocol):
@@ -84,3 +86,41 @@ class Tool(Protocol):
         cancellation: Cancellation,
     ) -> ToolResult:
         """执行调用并始终返回结构化结果。"""
+
+
+class ToolCatalog(Protocol):
+    """能够按名称解析工具的全局目录或当前请求视图。"""
+
+    @property
+    def context(self) -> ToolContext: ...
+
+    @property
+    def definitions(self) -> tuple[ToolDefinition, ...]: ...
+
+    @property
+    def read_only_definitions(self) -> tuple[ToolDefinition, ...]: ...
+
+    def get(self, name: str) -> Tool | None: ...
+
+
+class ToolView:
+    """一轮请求内冻结的工具可见范围，不修改全局注册表。"""
+
+    def __init__(self, context: ToolContext, tools: Mapping[str, Tool]) -> None:
+        self._context = context
+        self._tools = dict(tools)
+
+    @property
+    def context(self) -> ToolContext:
+        return self._context
+
+    @property
+    def definitions(self) -> tuple[ToolDefinition, ...]:
+        return tuple(tool.definition for tool in self._tools.values())
+
+    @property
+    def read_only_definitions(self) -> tuple[ToolDefinition, ...]:
+        return tuple(tool.definition for tool in self._tools.values() if tool.safety is ToolSafety.READ_ONLY)
+
+    def get(self, name: str) -> Tool | None:
+        return self._tools.get(name)

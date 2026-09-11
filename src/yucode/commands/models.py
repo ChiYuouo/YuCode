@@ -71,7 +71,8 @@ class CommandUI(Protocol):
 
 @dataclass(frozen=True)
 class CommandContext:
-    registry: "CommandRegistry"
+    registry: object
     ui: CommandUI
     agent: "Agent"
     sessions: object | None = None
+    skills: object | None = None

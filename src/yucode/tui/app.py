@@ -22,8 +22,9 @@ from yucode.config import ProviderConfig
 from yucode.mcp.manager import MCPManager
 from yucode.permissions import ApprovalChoice, PermissionMode, PermissionRequest
 from yucode.providers.base import CacheUsage, TextContent, ToolResultContent
+from yucode.skills.runtime import SkillConfigurationError
 from yucode.tui.widgets import (
-    AssistantMessage, ContextActivity,
+    AssistantMessage, ContextActivity, ForkActivity,
     ChatStatus,
     Composer,
     ErrorMessage,
@@ -91,7 +92,9 @@ class ChatApp(App[None]):
         self._activity_timer: Timer | None = None
         self._activity_frame = 0
         self._pending_tools: dict[str, PendingToolActivity] = {}
+        self._fork_activity: ForkActivity | None = None
         self._sessions = getattr(agent, "session_manager", None)
+        self._skills = getattr(agent, "skill_runtime", None)
         self._memory = getattr(agent, "_memory", None)
         self._startup_warnings = tuple(getattr(agent, "startup_warnings", ()))
         self._command_registry = command_registry or getattr(agent, "command_registry", None) or build_builtin_registry()
@@ -120,11 +123,23 @@ class ChatApp(App[None]):
     @work(exclusive=True)
     async def _load_mcp(self) -> None:
         warnings = await self._mcp_manager.start(self._agent._registry)
+        skills = getattr(self._agent, "skill_runtime", None)
+        if skills is not None:
+            try:
+                warnings = (*warnings, *skills.initialize())
+            except SkillConfigurationError as error:
+                self._show_error(f"Skill 配置错误：{error}")
+                await self._mcp_manager.close()
+                self.exit()
+                return
         self.query_one(WelcomePanel).set_mcp_status(
             self._mcp_manager.connected_count, self._mcp_manager.tool_count
         )
         for warning in warnings:
-            self._show_error(f"MCP Server {warning.server_name} 未加载：{warning.reason}")
+            if hasattr(warning, "server_name"):
+                self._show_error(f"MCP Server {warning.server_name} 未加载：{warning.reason}")
+            else:
+                self._show_error(warning.message)
         for warning in self._startup_warnings:
             self._show_error(warning)
         prompt = self.query_one(Composer)
@@ -174,7 +189,7 @@ class ChatApp(App[None]):
             if parsed.kind is InputKind.CHAT:
                 await self.send_user_message(parsed.text)
             else:
-                context = CommandContext(self._command_registry, self, self._agent, self._sessions)
+                context = CommandContext(self._command_registry, self, self._agent, self._sessions, self._skills)
                 await CommandDispatcher(context).dispatch(parsed)
         finally:
             if self._generating:
@@ -693,6 +708,33 @@ class ChatApp(App[None]):
                 self._pending_approval = None
             if self._active_permission_card is card:
                 self._active_permission_card = None
+
+    async def request_skill_permission(self, request: PermissionRequest) -> ApprovalChoice:
+        """供隔离 Skill 复用当前界面的权限确认卡片。"""
+        return await self._request_permission_approval(request)
+
+    async def show_skill_progress(self, text: str) -> None:
+        """隔离 Agent 展示阶段进度，不泄露其完整私有对话。"""
+        chat = self.query_one("#chat-view", VerticalScroll)
+        if self._fork_activity is None:
+            self._fork_activity = ForkActivity(text)
+            await chat.mount(self._fork_activity)
+        else:
+            self._fork_activity.set_progress(text)
+        self._scroll_to_latest(chat)
+        self._refresh_status(text)
+
+    async def show_skill_summary(self, text: str) -> None:
+        """将隔离任务的最终摘要作为 Markdown 回复显示。"""
+        if self._fork_activity is not None:
+            self._fork_activity.finish()
+            self._fork_activity = None
+        chat = self.query_one("#chat-view", VerticalScroll)
+        message = AssistantMessage()
+        await chat.mount(message)
+        await message.append_text(text)
+        message.finish()
+        self._scroll_to_latest(chat)
 
     def handle_permission_key(self, event) -> bool:
         """当输入框仍持有焦点时，也优先把确认键交给活动卡片。"""

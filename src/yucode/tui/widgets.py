@@ -363,6 +363,22 @@ class NoticeMessage(Static):
         super().__init__(message, classes="message notice-message")
 
 
+class ForkActivity(Static):
+    """隔离 Skill 的可见进度；不展示其完整私有对话。"""
+
+    def __init__(self, content: str) -> None:
+        super().__init__(classes="message context-activity")
+        self.set_progress(content)
+
+    def set_progress(self, content: str) -> None:
+        message = Text("◇ 独立 Skill：", style="bold #63d8ef")
+        message.append(content, style="#c8d2d5")
+        self.update(message)
+
+    def finish(self) -> None:
+        self.add_class("completed")
+
+
 class ContextActivity(Static):
     """显示上下文管理的简短状态，不展示内部摘要。"""
 

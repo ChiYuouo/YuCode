@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from yucode.tools.base import Tool, ToolContext, ToolDefinition, ToolSafety
+from yucode.tools.base import Tool, ToolContext, ToolDefinition, ToolSafety, ToolView
 from yucode.tools.command import RunCommandTool
 from yucode.tools.filesystem import EditFileTool, FindFilesTool, ReadFileTool, SearchCodeTool, WriteFileTool
 
@@ -34,6 +34,11 @@ class ToolRegistry:
         return tuple(tool.definition for tool in self._tools.values())
 
     @property
+    def all_definitions(self) -> tuple[ToolDefinition, ...]:
+        """全局目录中的全部工具，供启动校验使用。"""
+        return self.definitions
+
+    @property
     def read_only_definitions(self) -> tuple[ToolDefinition, ...]:
         """返回规划模式允许暴露给模型的工具。"""
         return tuple(
@@ -50,3 +55,8 @@ class ToolRegistry:
         if len(names) != len(set(names)) or any(name in self._tools for name in names):
             raise ValueError("MCP 工具名称与现有工具冲突。")
         self._tools.update({tool.definition.name: tool for tool in selected})
+
+    def view(self, names: Iterable[str] | None = None) -> ToolView:
+        """创建不影响全局目录的冻结可见工具视图。"""
+        selected = self._tools if names is None else {name: self._tools[name] for name in names if name in self._tools}
+        return ToolView(self._context, selected)

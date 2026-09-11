@@ -45,6 +45,7 @@ async def _compact(context: CommandContext, arguments: str) -> None:
 async def _clear(context: CommandContext, arguments: str) -> None:
     _no_arguments(arguments)
     await context.ui.clear_chat()
+    context.agent.clear_active_skills()
     await context.ui.show_message("已清空聊天显示；当前对话上下文仍保留。")
     context.ui.refresh_status()
 
@@ -117,6 +118,23 @@ async def _status(context: CommandContext, arguments: str) -> None:
         f"会话：{status.session_id or '不可用'} · 消息 {status.message_count}\n"
         f"上下文估算：{status.estimated_context_tokens} Token\n最近一轮：{recent}{cache}"
     )
+
+
+async def _skill(context: CommandContext, arguments: str) -> None:
+    _no_arguments(arguments)
+    runtime = context.skills
+    if runtime is None:
+        await context.ui.show_message("当前没有可用的 Skill 运行时。", error=True)
+        return
+    items = runtime.active_items()
+    active_names = {item.definition.name for item in items}
+    active_lines = [f"{item.definition.name} · {item.definition.description}\n  模式：{item.definition.mode.value} · 参数：{item.arguments or '无'}" for item in items]
+    available = [item for item in runtime.catalog.definitions.values() if item.name not in active_names]
+    available_lines = [f"{item.name} · {item.description}\n  可直接执行：/skill:{item.name}" for item in available]
+    sections = ["已激活 Skill：\n" + ("\n".join(active_lines) if active_lines else "无")]
+    if available_lines:
+        sections.append("可用但未激活的 Skill：\n" + "\n".join(available_lines))
+    await context.ui.show_message("\n\n".join(sections))
 
 
 async def _session(context: CommandContext, arguments: str) -> None:
@@ -206,6 +224,7 @@ def build_builtin_registry() -> CommandRegistry:
         CommandDefinition("memory", (), "查看并梳理项目记忆", "/memory [补充要求]", CommandKind.PROMPT, _memory, "可选补充要求"),
         CommandDefinition("permission", (), "查看或切换权限模式", "/permission [模式]", CommandKind.UI, _permission, "default、accept_edits、plan、bypass_permissions"),
         CommandDefinition("status", (), "显示模型、会话和 Token 状态", "/status", CommandKind.LOCAL, _status),
+        CommandDefinition("skill", (), "查看当前已激活的 Skill", "/skill", CommandKind.LOCAL, _skill),
         CommandDefinition("review", (), "审查当前工作区改动", "/review [审查重点]", CommandKind.PROMPT, _review, "可选审查重点"),
         CommandDefinition("exit", ("quit",), "退出 YuCode", "/exit", CommandKind.UI, _exit, hidden=True),
     ))
