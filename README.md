@@ -319,8 +319,6 @@ teams:
 └── permissions.yaml  # 用户级权限规则
 ```
 
-早期版本在 Windows 上把 `yucode.yaml` 与 `skills/` 放在 `%APPDATA%\YuCode\`。该位置仍作为只读回退保留：新位置缺失对应项时会继续从旧位置读取，启动时若检测到旧目录仍有内容，会给出一次中文迁移提示。
-
 ## 开发与测试
 
 ```powershell

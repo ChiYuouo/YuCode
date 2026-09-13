@@ -166,12 +166,16 @@ def test_accumulates_streamed_tool_arguments_and_sends_tool_schema() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         captured["json"] = json.loads(request.content)
         body = (
+            # 真实 Responses API 形状：call_id/name 只在 output_item.added 的 item 里下发，
+            # arguments.done 事件只有 item_id 与 arguments。
+            'event: response.output_item.added\n'
+            'data: {"type":"response.output_item.added","item":{"id":"item-1","type":"function_call","status":"in_progress","arguments":"","call_id":"call-1","name":"read_file"},"output_index":1}\n\n'
             'event: response.function_call_arguments.delta\n'
             'data: {"type":"response.function_call_arguments.delta","item_id":"item-1","delta":"{\\"path\\":\\"REA"}\n\n'
             'event: response.function_call_arguments.delta\n'
             'data: {"type":"response.function_call_arguments.delta","item_id":"item-1","delta":"DME.md\\"}"}\n\n'
             'event: response.function_call_arguments.done\n'
-            'data: {"type":"response.function_call_arguments.done","item_id":"item-1","call_id":"call-1","name":"read_file","arguments":"{\\"path\\":\\"README.md\\"}"}\n\n'
+            'data: {"type":"response.function_call_arguments.done","item_id":"item-1","arguments":"{\\"path\\":\\"README.md\\"}"}\n\n'
         )
         return httpx.Response(200, content=body)
 
@@ -183,6 +187,42 @@ def test_accumulates_streamed_tool_arguments_and_sends_tool_schema() -> None:
     payload = captured["json"]
     assert isinstance(payload, dict)
     assert payload["tools"][0]["name"] == "read_file"
+
+
+def test_accepts_call_metadata_inline_in_done_event() -> None:
+    """部分兼容实现直接在 done 事件里携带 call_id/name，应作为兜底被接受。"""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        body = (
+            'event: response.function_call_arguments.delta\n'
+            'data: {"type":"response.function_call_arguments.delta","item_id":"item-1","delta":"{}"}\n\n'
+            'event: response.function_call_arguments.done\n'
+            'data: {"type":"response.function_call_arguments.done","item_id":"item-1","call_id":"call-1","name":"read_file","arguments":"{}"}\n\n'
+        )
+        return httpx.Response(200, content=body)
+
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    definition = ToolDefinition("read_file", "读取文件", {"type": "object", "properties": {}})
+    events = collect(provider, [Message("user", "读 README")], tools=[definition])
+
+    assert events[-1].tool_call == ToolCall("call-1", "read_file", {})
+
+
+def test_rejects_tool_call_without_known_name() -> None:
+    """added 事件没给 name、done 也没有兜底字段时，宁可失败也不猜测。"""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        body = (
+            'event: response.function_call_arguments.done\n'
+            'data: {"type":"response.function_call_arguments.done","item_id":"item-1","arguments":"{}"}\n\n'
+        )
+        return httpx.Response(200, content=body)
+
+    provider = OpenAIProvider(config(), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    definition = ToolDefinition("read_file", "读取文件", {"type": "object", "properties": {}})
+
+    with pytest.raises(ProviderError, match="格式错误的工具调用"):
+        collect(provider, [Message("user", "读 README")], tools=[definition])
 
 
 def test_serializes_tool_call_and_result_in_responses_input() -> None:

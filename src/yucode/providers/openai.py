@@ -75,6 +75,7 @@ class OpenAIProvider:
             response = await _send_with_cancellation(client, request, cancellation)
             await self._raise_for_status(response)
             watcher = asyncio.create_task(_close_on_cancel(response, cancellation))
+            call_metadata: dict[str, tuple[str, str]] = {}
             argument_parts: dict[str, str] = {}
             async for frame in decode_sse(response.aiter_lines()):
                 if cancellation.is_cancelled:
@@ -90,10 +91,25 @@ class OpenAIProvider:
                     delta = event.get("delta")
                     if isinstance(item_id, str) and isinstance(delta, str):
                         argument_parts[item_id] = argument_parts.get(item_id, "") + delta
+                elif event_type == "response.output_item.added":
+                    # function_call 的 call_id/name 只在条目事件里下发，先记录备用。
+                    item = event.get("item")
+                    if isinstance(item, dict) and item.get("type") == "function_call":
+                        key = item.get("id")
+                        call_id = item.get("call_id")
+                        name = item.get("name")
+                        if isinstance(key, str) and isinstance(call_id, str) and isinstance(name, str):
+                            call_metadata[key] = (call_id, name)
                 elif event_type == "response.function_call_arguments.done":
                     item_id = event.get("item_id")
-                    call_id = event.get("call_id")
-                    name = event.get("name")
+                    call_id, name = None, None
+                    if isinstance(item_id, str) and item_id in call_metadata:
+                        call_id, name = call_metadata.pop(item_id)
+                    # 部分兼容实现会在 done 事件里直接携带 call_id/name，作为兜底。
+                    if not isinstance(call_id, str):
+                        call_id = event.get("call_id")
+                    if not isinstance(name, str):
+                        name = event.get("name")
                     arguments = event.get("arguments")
                     if not isinstance(arguments, str) and isinstance(item_id, str):
                         arguments = argument_parts.get(item_id, "")
