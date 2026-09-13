@@ -87,6 +87,10 @@ def test_file_path_escape_and_symlink_escape_are_denied(tmp_path: Path) -> None:
         link.symlink_to(outside)
     except OSError:
         pytest.skip("当前环境不允许创建符号链接")
+    if not link.is_symlink():
+        # 部分 Windows 环境下 os.symlink 会返回成功却不真正创建链接，
+        # 此时不能当作"环境不支持"以外的情况处理，否则会去断言一个不存在的路径。
+        pytest.skip("当前环境未能真正创建符号链接")
     assert evaluate(permissions, call("edit_file", "outside-link"), FakeTool("edit_file")).error_code == "path_outside_workspace"
 
 

@@ -109,6 +109,10 @@ def test_file_tools_reject_symlink_escape_and_parent_glob(tmp_path: Path) -> Non
         link.symlink_to(outside)
     except OSError:
         pytest.skip("当前环境不允许创建符号链接")
+    if not link.is_symlink():
+        # 部分 Windows 环境下 os.symlink 会返回成功却不真正创建链接，
+        # 此时不能当作"环境不支持"以外的情况处理，否则会去断言一个不存在的路径。
+        pytest.skip("当前环境未能真正创建符号链接")
 
     assert run_tool(ReadFileTool(), {"path": "outside-link.txt"}, tmp_path).error_code == "path_outside_workspace"
     assert run_tool(FindFilesTool(), {"pattern": "../*.txt"}, tmp_path).error_code == "invalid_pattern"
