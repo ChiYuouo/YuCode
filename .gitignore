@@ -1,4 +1,5 @@
-.venv/
+# 不带结尾斜杠：Worktree 初始化创建的是软链接，带斜杠的规则只匹配目录。
+.venv
 .idea/
 __pycache__/
 .pytest_cache/

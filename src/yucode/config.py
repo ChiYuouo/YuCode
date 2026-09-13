@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 import os
 from pathlib import Path
 import re
@@ -14,6 +15,7 @@ import yaml
 from yucode.permissions import PermissionMode
 from yucode.hooks.loader import load_hooks
 from yucode.hooks.models import Hook
+from yucode import userdirs
 
 
 class ConfigError(ValueError):
@@ -36,6 +38,42 @@ class AgentConfig:
     """Agent Loop 的安全配置。"""
 
     max_iterations: int = 10
+
+
+@dataclass(frozen=True)
+class SubagentConfig:
+    global_disallowed: tuple[str, ...] = ()
+    background_allowed: tuple[str, ...] | None = None
+    execution_timeout_seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class WorktreeConfig:
+    """Git Worktree 的初始化与清理配置。"""
+
+    worktreeinclude: tuple[str, ...] = ()
+    symlink_directories: tuple[str, ...] = ("node_modules", ".venv", "vendor")
+    cleanup_after: timedelta = timedelta(days=7)
+    cleanup_interval_seconds: float = 3600
+
+    @property
+    def scaffolding_paths(self) -> tuple[str, ...]:
+        """初始化器会在 Worktree 内创建、但不属于使用方改动的仓库内相对路径。
+
+        复制规则与软链接规则产生的都是运行环境脚手架，不是成员或子 Agent 的工作成果，
+        因此"是否还有未提交改动"和"该提交哪些文件"都必须把它们排除在外。
+        """
+        return tuple(dict.fromkeys((*self.worktreeinclude, *self.symlink_directories)))
+
+
+@dataclass(frozen=True)
+class TeamConfig:
+    """Agent Team 的本地运行与协调配置。"""
+
+    enabled: bool = True
+    backend_priority: tuple[str, ...] = ("tmux", "iterm2", "in_process")
+    coordinator_enabled: bool = False
+    mailbox_lock_timeout_seconds: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -84,10 +122,16 @@ class AppConfig:
     mcp_servers: tuple[MCPServerConfig, ...] = ()
     mcp_issues: tuple[MCPConfigIssue, ...] = ()
     hooks: tuple[Hook, ...] = ()
+    subagents: SubagentConfig = SubagentConfig()
+    worktrees: WorktreeConfig = WorktreeConfig()
+    teams: TeamConfig = TeamConfig()
 
 
-def load_config(path: Path | None = None) -> AppConfig:
-    """从指定路径或当前目录的 ``yucode.yaml`` 加载配置。"""
+def load_config(path: Path | None = None, home: Path | None = None) -> AppConfig:
+    """从指定路径或当前目录的 ``yucode.yaml`` 加载配置。
+
+    ``home`` 仅用于测试注入用户主目录，正常调用时省略。
+    """
     config_path = path or Path.cwd() / "yucode.yaml"
     if not config_path.is_file():
         raise ConfigError(f"找不到配置文件：{config_path.name}。请在当前目录创建 yucode.yaml。")
@@ -112,6 +156,9 @@ def load_config(path: Path | None = None) -> AppConfig:
     api_key = _required_text(raw, "api_key")
     thinking_enabled = _parse_thinking(raw.get("thinking"))
     agent = _parse_agent(raw.get("agent"))
+    subagents = _parse_subagents(raw.get("subagents"))
+    worktrees = _parse_worktrees(raw.get("worktrees"))
+    teams = _parse_teams(raw.get("teams"))
     context = _parse_context(raw.get("context"))
     permissions = _parse_permissions(raw.get("permissions"))
     try:
@@ -122,7 +169,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     if protocol == "openai" and thinking_enabled:
         raise ConfigError("thinking.enabled 仅支持 anthropic 协议。")
 
-    servers, issues = _load_mcp_servers(raw, _load_user_raw(config_path))
+    servers, issues = _load_mcp_servers(raw, _load_user_raw(config_path, home))
     return AppConfig(
         provider=ProviderConfig(
             protocol=protocol,
@@ -137,15 +184,15 @@ def load_config(path: Path | None = None) -> AppConfig:
         mcp_servers=servers,
         mcp_issues=issues,
         hooks=hooks,
+        subagents=subagents,
+        worktrees=worktrees,
+        teams=teams,
     )
 
 
-def _load_user_raw(project_path: Path) -> Mapping[str, Any]:
+def _load_user_raw(project_path: Path, home: Path | None = None) -> Mapping[str, Any]:
     """用户配置只为 MCP Server 提供可选的补充来源。"""
-    appdata = os.environ.get("APPDATA")
-    if not appdata:
-        return {}
-    user_path = Path(appdata) / "YuCode" / "yucode.yaml"
+    user_path = userdirs.resolve_path("yucode.yaml", home)
     if user_path.resolve() == project_path.resolve() or not user_path.is_file():
         return {}
     try:
@@ -241,6 +288,92 @@ def _parse_agent(value: Any) -> AgentConfig:
     if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
         raise ConfigError("agent.max_iterations 必须是正整数。")
     return AgentConfig(max_iterations=max_iterations)
+
+
+def _parse_subagents(value: Any) -> SubagentConfig:
+    if value is None:
+        return SubagentConfig()
+    if not isinstance(value, Mapping):
+        raise ConfigError("subagents 必须是键值对象。")
+    allowed = {"global_disallowed", "background_allowed", "execution_timeout_seconds"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ConfigError(f"subagents 包含未知字段：{sorted(unknown)[0]}。")
+    def names(item: Any, field: str, optional: bool = False):
+        if item is None and optional:
+            return None
+        if not isinstance(item, list) or not all(isinstance(name, str) and name.strip() for name in item):
+            raise ConfigError(f"subagents.{field} 必须是字符串列表。")
+        if len(set(item)) != len(item):
+            raise ConfigError(f"subagents.{field} 不能包含重复工具名。")
+        return tuple(item)
+    timeout = value.get("execution_timeout_seconds")
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0):
+        raise ConfigError("subagents.execution_timeout_seconds 必须是正数。")
+    return SubagentConfig(names(value.get("global_disallowed", []), "global_disallowed"), names(value.get("background_allowed"), "background_allowed", True), float(timeout) if timeout is not None else None)
+
+
+def _parse_worktrees(value: Any) -> WorktreeConfig:
+    if value is None:
+        return WorktreeConfig()
+    if not isinstance(value, Mapping):
+        raise ConfigError("worktrees 必须是键值对象。")
+    allowed = {"worktreeinclude", "symlink_directories", "cleanup_after_hours", "cleanup_interval_seconds"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ConfigError(f"worktrees 包含未知字段：{sorted(unknown)[0]}。")
+
+    def paths(raw: Any, field: str, default: tuple[str, ...]) -> tuple[str, ...]:
+        items = default if raw is None else raw
+        if not isinstance(items, (list, tuple)) or not all(isinstance(item, str) for item in items):
+            raise ConfigError(f"worktrees.{field} 必须是字符串列表。")
+        normalized: list[str] = []
+        for item in items:
+            candidate = item.strip().replace("\\", "/")
+            path = Path(candidate)
+            if not candidate or path.is_absolute() or ".." in path.parts or "." in path.parts:
+                raise ConfigError(f"worktrees.{field} 只能包含仓库内的相对路径。")
+            normalized.append(candidate)
+        if len(set(normalized)) != len(normalized):
+            raise ConfigError(f"worktrees.{field} 不能包含重复路径。")
+        return tuple(normalized)
+
+    cleanup_hours = value.get("cleanup_after_hours", 24 * 7)
+    interval = value.get("cleanup_interval_seconds", 3600)
+    if isinstance(cleanup_hours, bool) or not isinstance(cleanup_hours, (int, float)) or cleanup_hours <= 0:
+        raise ConfigError("worktrees.cleanup_after_hours 必须是正数。")
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)) or interval <= 0:
+        raise ConfigError("worktrees.cleanup_interval_seconds 必须是正数。")
+    return WorktreeConfig(
+        paths(value.get("worktreeinclude", []), "worktreeinclude", ()),
+        paths(value.get("symlink_directories"), "symlink_directories", WorktreeConfig().symlink_directories),
+        timedelta(hours=float(cleanup_hours)),
+        float(interval),
+    )
+
+
+def _parse_teams(value: Any) -> TeamConfig:
+    if value is None:
+        return TeamConfig()
+    if not isinstance(value, Mapping):
+        raise ConfigError("teams 必须是键值对象。")
+    allowed = {"enabled", "backend_priority", "coordinator_enabled", "mailbox_lock_timeout_seconds"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ConfigError(f"teams 包含未知字段：{sorted(unknown)[0]}。")
+    enabled = value.get("enabled", True)
+    coordinator_enabled = value.get("coordinator_enabled", False)
+    if not isinstance(enabled, bool) or not isinstance(coordinator_enabled, bool):
+        raise ConfigError("teams.enabled 和 teams.coordinator_enabled 必须是 true 或 false。")
+    priority = value.get("backend_priority", ["tmux", "iterm2", "in_process"])
+    valid_backends = {"tmux", "iterm2", "in_process"}
+    if (not isinstance(priority, list) or not priority or not all(isinstance(item, str) and item in valid_backends for item in priority)
+            or len(set(priority)) != len(priority)):
+        raise ConfigError("teams.backend_priority 必须是无重复的 tmux、iterm2、in_process 列表。")
+    timeout = value.get("mailbox_lock_timeout_seconds", 5.0)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+        raise ConfigError("teams.mailbox_lock_timeout_seconds 必须是正数。")
+    return TeamConfig(enabled, tuple(priority), coordinator_enabled, float(timeout))
 
 
 def _parse_context(value: Any) -> ContextConfig:

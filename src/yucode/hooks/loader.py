@@ -10,19 +10,41 @@ from yucode.hooks.conditions import parse_condition_group
 from yucode.hooks.models import Action, ActionType, Hook, HookEvent
 from yucode.hooks.template import validate_template
 
+_RULE_KEYS = {"id", "event", "if", "action", "once", "async"}
+_ACTION_KEYS = {"type", "command", "prompt", "url", "method", "body", "timeout_seconds", "reject", "reason"}
+
 
 def load_hooks(raw: Any) -> tuple[Hook, ...]:
     if raw is None: return ()
     if not isinstance(raw, list): raise ValueError("hooks 必须是列表。")
     hooks = []
+    seen: set[str] = set()
     for index, item in enumerate(raw, 1):
-        try: hooks.append(_parse_hook(item, index))
-        except ValueError as error: raise ValueError(f"Hook 第 {index} 条无效：{error}") from error
+        try: hook = _parse_hook(item, index)
+        except ValueError as error: raise ValueError(f"{_raw_label(item, index)} 无效：{error}") from error
+        if hook.identifier is not None:
+            if hook.identifier in seen: raise ValueError(f"Hook id 重复：{hook.identifier}。每条规则需要唯一的 id。")
+            seen.add(hook.identifier)
+        hooks.append(hook)
     return tuple(hooks)
+
+
+def _raw_label(raw: Any, index: int) -> str:
+    """解析失败时仍尽量用配置里的 id 指认规则，否则退回声明顺序。"""
+    if isinstance(raw, Mapping):
+        identifier = raw.get("id")
+        if isinstance(identifier, str) and identifier.strip():
+            return f"Hook「{identifier.strip()}」"
+    return f"Hook 第 {index} 条"
 
 
 def _parse_hook(raw: Any, index: int) -> Hook:
     if not isinstance(raw, Mapping): raise ValueError("规则必须是键值对象。")
+    unknown = set(raw) - _RULE_KEYS
+    if unknown: raise ValueError(f"包含未知字段：{sorted(unknown, key=str)[0]}。")
+    identifier = raw.get("id")
+    if identifier is not None and (not isinstance(identifier, str) or not identifier.strip()):
+        raise ValueError("id 必须是非空字符串。")
     try: event = HookEvent(raw.get("event"))
     except ValueError as error: raise ValueError("event 必须是支持的生命周期事件。") from error
     condition = parse_condition_group(raw["if"]) if "if" in raw else None
@@ -33,11 +55,13 @@ def _parse_hook(raw: Any, index: int) -> Hook:
         if event is not HookEvent.PRE_TOOL_USE: raise ValueError("reject 只允许用于 pre_tool_use。")
         if async_run: raise ValueError("reject Hook 不允许 async。")
         if not action.reason: raise ValueError("reject Hook 必须提供 reason。")
-    return Hook(event, action, condition, once, async_run, index)
+    return Hook(event, action, condition, once, async_run, index, identifier.strip() if isinstance(identifier, str) else None)
 
 
 def _parse_action(raw: Any) -> Action:
     if not isinstance(raw, Mapping): raise ValueError("action 必须是键值对象。")
+    unknown = set(raw) - _ACTION_KEYS
+    if unknown: raise ValueError(f"action 包含未知字段：{sorted(unknown, key=str)[0]}。")
     try: kind = ActionType(raw.get("type"))
     except ValueError as error: raise ValueError("action.type 只能是 command、prompt、http 或 agent。") from error
     def text(name: str, required=False) -> str | None:

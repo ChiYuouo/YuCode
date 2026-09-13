@@ -60,3 +60,8 @@ class ToolRegistry:
         """创建不影响全局目录的冻结可见工具视图。"""
         selected = self._tools if names is None else {name: self._tools[name] for name in names if name in self._tools}
         return ToolView(self._context, selected)
+
+    def view_for(self, root: Path, names: Iterable[str] | None = None) -> ToolView:
+        """为显式工作目录创建冻结工具视图，不改变注册表的默认目录。"""
+        selected = self._tools if names is None else {name: self._tools[name] for name in names if name in self._tools}
+        return ToolView(ToolContext(root.resolve()), selected)

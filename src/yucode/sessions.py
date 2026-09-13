@@ -48,9 +48,10 @@ class RecoveredSession:
 class SessionManager:
     """管理当前项目 `.yucode/sessions` 内的会话文件。"""
 
-    def __init__(self, workspace_root: Path, now: Callable[[], datetime] | None = None) -> None:
+    def __init__(self, workspace_root: Path, now: Callable[[], datetime] | None = None,
+                 directory: Path | None = None) -> None:
         self._root = workspace_root.resolve()
-        self._directory = self._root / ".yucode" / "sessions"
+        self._directory = directory.resolve() if directory is not None else self._root / ".yucode" / "sessions"
         self._now = now or (lambda: datetime.now(UTC))
         self._active_session_id: str | None = None
 

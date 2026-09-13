@@ -9,7 +9,7 @@ from pathlib import Path
 
 from yucode.hooks.conditions import matches
 from yucode.hooks.executors import ActionExecutor
-from yucode.hooks.models import Hook, HookContext, HookEvent, HookRunResult, ToolRejectedError
+from yucode.hooks.models import Hook, HookContext, HookEvent, HookRunResult, ToolRejectedError, hook_label
 from yucode.hooks.template import render_template
 
 _LOG = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class HookEngine:
                 task = asyncio.create_task(self._run_safely(hook, context)); self._tasks.add(task); task.add_done_callback(self._tasks.discard)
             else:
                 try: prompts.extend((await self._executor.execute(hook.action, context)).prompts); self._once.add(hook.source_index) if hook.once else None
-                except Exception as error: _LOG.warning("Hook 执行失败：%s", error)
+                except Exception as error: _LOG.warning("%s 执行失败：%s", hook_label(hook), error)
         self._prompts.extend(prompts)
         return HookRunResult(tuple(prompts))
 
@@ -41,7 +41,7 @@ class HookEngine:
                 self._once.add(hook.source_index) if hook.once else None; prompts.extend(result.prompts)
                 if hook.action.reject: raise ToolRejectedError(render_template(hook.action.reason or "工具调用被 Hook 拒绝。", context))
             except ToolRejectedError: raise
-            except Exception as error: _LOG.warning("Hook 执行失败：%s", error)
+            except Exception as error: _LOG.warning("%s 执行失败：%s", hook_label(hook), error)
         self._prompts.extend(prompts); return HookRunResult(tuple(prompts))
 
     def drain_prompts(self) -> tuple[str, ...]:
@@ -53,4 +53,4 @@ class HookEngine:
     async def _run_safely(self, hook: Hook, context: HookContext) -> None:
         try:
             result = await self._executor.execute(hook.action, context); self._prompts.extend(result.prompts)
-        except Exception as error: _LOG.warning("异步 Hook 执行失败：%s", error)
+        except Exception as error: _LOG.warning("%s 异步执行失败：%s", hook_label(hook), error)

@@ -109,9 +109,39 @@ def test_ch13_t18_do_returns_to_default(tmp_path: Path) -> None:
     asyncio.run(check())
 
 
+def test_permission_accepts_camel_case_and_snake_case(tmp_path: Path) -> None:
+    """配置文件用 camelCase，命令原先只认 snake_case，两种拼写都要能用。"""
+    async def check() -> None:
+        for spelling, expected in (
+            ("default", PermissionMode.DEFAULT),
+            ("acceptEdits", PermissionMode.ACCEPT_EDITS),
+            ("accept_edits", PermissionMode.ACCEPT_EDITS),
+            ("plan", PermissionMode.PLAN),
+            ("bypassPermissions", PermissionMode.BYPASS_PERMISSIONS),
+            ("bypass_permissions", PermissionMode.BYPASS_PERMISSIONS),
+        ):
+            command_context, ui = context(tmp_path)
+            await CommandDispatcher(command_context).dispatch(parse_input(f"/permission {spelling}"))
+            assert command_context.agent.permissions.mode is expected, spelling
+            assert ui.mode is expected, spelling
+    asyncio.run(check())
+
+
+def test_permission_reports_unknown_mode_with_available_values(tmp_path: Path) -> None:
+    async def check() -> None:
+        command_context, ui = context(tmp_path)
+        await CommandDispatcher(command_context).dispatch(parse_input("/permission accept"))
+        text, is_error = ui.messages[-1]
+        assert is_error is True
+        assert "未知权限模式" in text
+        assert "acceptEdits" in text and "bypassPermissions" in text
+        assert command_context.agent.permissions.mode is PermissionMode.DEFAULT
+    asyncio.run(check())
+
+
 def test_ch13_t24_help_has_exactly_ten_public_commands(tmp_path: Path) -> None:
     command_context, _ = context(tmp_path)
-    assert len(command_context.registry.visible()) == 11
+    assert len(command_context.registry.visible()) == 15
     assert command_context.registry.get("?").name == "help"
     assert command_context.registry.get("quit").hidden
 

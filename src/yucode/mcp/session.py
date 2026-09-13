@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from yucode.config import MCPServerConfig
-from yucode.mcp.transport import MCPTransport, MCPTransportError, StdioTransport, StreamableHttpTransport
+from yucode.mcp.transport import MCPTransport, StdioTransport, StreamableHttpTransport
 
 REQUEST_TIMEOUT_SECONDS = 30.0
 PROTOCOL_VERSION = "2025-06-18"

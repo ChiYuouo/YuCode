@@ -12,7 +12,6 @@ from yucode.providers.base import Usage
 
 if TYPE_CHECKING:
     from yucode.agent import Agent
-    from yucode.commands.registry import CommandRegistry
 
 
 class CommandKind(str, Enum):

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, AsyncIterator, Literal, Protocol
 
 from yucode.cancellation import Cancellation
-from yucode.tools.base import ToolCall, ToolDefinition, ToolResult
+from yucode.tools.base import ToolCall, ToolResult
 
 if TYPE_CHECKING:
     from yucode.prompting import ModelRequest

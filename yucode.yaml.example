@@ -11,10 +11,28 @@ thinking:
 context:
   window_tokens: 128000
 
+# Agent 迭代预算。1 次迭代 = 1 次模型调用，同一响应里的多个工具并行执行只算一轮。
+# 预算是每个用户请求独立计数；触顶后最后一次响应里的工具不再执行，用户发"继续"可获得新一轮预算。
+agent:
+  max_iterations: 10
+
+# 子 Agent 工具收敛（只能减权限，不能加）。省略时子 Agent 可用全部工具。
+subagents:
+  # 对所有子 Agent 永久禁用这些工具。
+  global_disallowed: []
+  # 后台任务只允许这些工具；省略（或留空注释掉）表示不加额外限制。
+  # background_allowed: [read_file, find_files, search_code]
+  # 单个子 Agent 任务的最长执行秒数；省略表示不额外限制。
+  # execution_timeout_seconds: 600
+
 # Hook 自动化规则示例。$EVENT、$TOOL_NAME、$FILE_PATH、$MESSAGE、$ERROR 与
 # $TOOL_ARGS.xxx 会在动作执行前替换；可使用 once、async 和 timeout_seconds。
+# 规则、action 与 if 条件里的未知字段会直接报错，不会静默忽略。
+# id 可选且需唯一，用于诊断定位：报错会显示为 Hook「block-json-write」，
+# 未命名时显示为 Hook 第 N 条。
 # hooks:
-#   - event: pre_tool_use
+#   - id: block-json-write
+#     event: pre_tool_use
 #     if:
 #       all:
 #         - field: TOOL_NAME
@@ -26,26 +44,46 @@ context:
 
 # 权限模式：default（未命中副作用请求确认）、acceptEdits（自动接受项目内编辑）、
 # plan（只读）或 bypassPermissions（跳过未命中确认）。Shift+Tab 可在会话中切换。
+# 配置文件里是 camelCase；会话中 /permission 命令两种拼写都接受
+# （acceptEdits 与 accept_edits 等价）。
 permissions:
   mode: default
 
-# MCP 工具 Server。用户级配置可放在 %APPDATA%\YuCode\yucode.yaml；
+# Agent Team。默认已启用；成员默认只读。需要修改代码的成员在创建时由 Lead
+# 指定 writable: true，YuCode 才会为其创建独立 Worktree。
+# teams:
+#   enabled: true
+#   backend_priority: [tmux, iterm2, in_process]
+#   coordinator_enabled: false
+#   mailbox_lock_timeout_seconds: 5
+
+# Git Worktree 隔离。目录固定在仓库的 .yucode/worktrees/。
+# worktrees:
+#   worktreeinclude: [".env.local", "config/local"]
+#   symlink_directories: ["node_modules", ".venv", "vendor"]
+#   cleanup_after_hours: 168
+#   cleanup_interval_seconds: 3600
+
+# MCP 工具 Server。用户级配置可放在 ~/.yucode/yucode.yaml（Windows、macOS、
+# Linux 一致）；早期版本的 %APPDATA%\YuCode\yucode.yaml 仍作为回退读取。
 # 项目级 yucode.yaml 中同名 Server 会完整覆盖用户级声明。
 # ${VAR} 会展开为启动 YuCode 的环境变量。每次 MCP 请求最长等待 30 秒。
-mcp_servers:
-  local_demo:
-    transport: stdio
-    command: python
-    args: ["-m", "my_mcp_server"]
-    env:
-      DEMO_TOKEN: ${DEMO_TOKEN}
-  remote_demo:
-    transport: http
-    url: https://example.com/mcp
-    headers:
-      Authorization: Bearer ${MCP_TOKEN}
-
-# 远端 get_weather 工具会以 MCP__local_demo__get_weather 名称提供给 Agent。
+# 取消注释后填写真实命令或地址；声明错误只影响该 Server（启动时给中文警告）。
+# mcp_servers:
+#   local_demo:
+#     transport: stdio
+#     command: python
+#     args: ["-m", "my_mcp_server"]
+#     env:
+#       DEMO_TOKEN: ${DEMO_TOKEN}
+#   remote_demo:
+#     transport: http
+#     url: https://example.com/mcp
+#     headers:
+#       Authorization: Bearer ${MCP_TOKEN}
+#
+# 已发现的工具会以 MCP__服务器名__工具名 命名后提供给 Agent。
+# 例如服务器 local_demo 提供 get_weather，则工具名为 MCP__local_demo__get_weather。
 
 # OpenAI 示例：
 # protocol: openai

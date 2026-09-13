@@ -9,13 +9,12 @@ from yucode.cancellation import Cancellation
 from yucode.permissions import ApprovalCallback as PermissionApprovalCallback
 from yucode.permissions import PermissionManager, PermissionOutcome, TaskAuthorization
 from yucode.tools.base import ToolCall, ToolCatalog, ToolContext, ToolResult, ToolSafety
-from yucode.tools.registry import ToolRegistry
 from yucode.workflow import ToolWorkflow
 from yucode.hooks.engine import HookEngine
 from yucode.hooks.models import HookContext, HookEvent, ToolRejectedError
 
 class ToolExecutor:
-    def __init__(self, registry: ToolRegistry, permissions: PermissionManager | None = None, hook_engine: HookEngine | None = None) -> None:
+    def __init__(self, registry: ToolCatalog, permissions: PermissionManager | None = None, hook_engine: HookEngine | None = None) -> None:
         self._registry = registry
         self._permissions = permissions or PermissionManager(registry.context.root)
         self._hooks = hook_engine

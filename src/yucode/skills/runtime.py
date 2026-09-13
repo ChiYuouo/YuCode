@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 
 from yucode.skills.loader import SkillLoader
 from yucode.skills.install import InstallResult, SkillInstaller

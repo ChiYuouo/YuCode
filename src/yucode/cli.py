@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 from rich.console import Console
 
@@ -28,12 +29,25 @@ from yucode.tools.registry import ToolRegistry
 from yucode.tui.app import ChatApp
 from yucode.hooks.engine import HookEngine
 from yucode.hooks.models import HookContext, HookEvent
+from yucode.subagents.factory import SubagentFactory
+from yucode.subagents.loader import AgentDefinitionLoader
+from yucode.subagents.policy import ToolPolicy
+from yucode.subagents.service import SubagentService
+from yucode.subagents.tasks import TaskManager
+from yucode.subagents.trace import TraceRegistry
+from yucode.worktrees.manager import WorktreeManager
+from yucode.worktrees.cleanup import WorktreeCleanupService
+from yucode import userdirs
+from yucode.teams.backends import BackendSelector, InProcessBackend, Iterm2Backend, TmuxBackend
+from yucode.teams.coordinator import COORDINATOR_NOTICE, active as coordinator_active
+from yucode.teams.service import TeamService
 import asyncio
 
 
 def main() -> None:
     """从当前目录读取配置后启动交互会话。"""
     console = Console()
+    resume_worktree = "--resume" in sys.argv[1:]
     try:
         command_registry = build_builtin_registry()
     except CommandRegistrationError as error:
@@ -46,6 +60,9 @@ def main() -> None:
         return
 
     workspace_root = Path.cwd()
+    worktrees = WorktreeManager(workspace_root, config.worktrees)
+    if resume_worktree:
+        worktrees.resume()
     registry = ToolRegistry(workspace_root)
     hooks = HookEngine(config.hooks, workspace_root)
     skills = SkillRuntime(SkillLoader(workspace_root), registry)
@@ -61,6 +78,16 @@ def main() -> None:
     sessions.cleanup_expired()
     conversation = Conversation(sessions.record_event)
     context = ContextManager(conversation, provider, registry.context.root, config.context)
+    factory = SubagentFactory(ToolPolicy(frozenset(config.subagents.global_disallowed), None if config.subagents.background_allowed is None else frozenset(config.subagents.background_allowed)))
+    subagents = SubagentService(
+        AgentDefinitionLoader(workspace_root),
+        factory,
+        TaskManager(TraceRegistry(), hooks, config.subagents.execution_timeout_seconds),
+        worktrees=worktrees,
+    )
+    drivers = (TmuxBackend(), Iterm2Backend(), InProcessBackend())
+    teams = TeamService(config.teams, workspace_root, BackendSelector(drivers), drivers, worktrees)
+    coordinator_mode = coordinator_active(config.teams)
     agent = Agent(
         provider,
         conversation,
@@ -72,12 +99,19 @@ def main() -> None:
         memory_manager=memory,
         skill_runtime=skills,
         hook_engine=hooks,
+        subagent_service=subagents,
+        worktree_manager=worktrees,
+        team_service=teams,
+        coordinator_mode=coordinator_mode,
+        runtime_notices=(COORDINATOR_NOTICE,) if coordinator_mode else (),
     )
+    teams.bind_parent(agent, factory)
     agent.mcp_manager = MCPManager(config.mcp_servers, config.mcp_issues)
+    agent.worktree_cleanup = WorktreeCleanupService(worktrees, config.worktrees.cleanup_interval_seconds)
     agent.session_manager = sessions
     agent.command_registry = SkillCommandCatalog(command_registry, skills)
     agent.skill_runtime = skills
-    agent.startup_warnings = (*loaded_instructions.warnings, *memory.drain_diagnostics())
+    agent.startup_warnings = (*userdirs.migration_warnings(), *loaded_instructions.warnings, *memory.drain_diagnostics(), *worktrees.warnings)
     async def lifecycle(event: HookEvent) -> None:
         await hooks.run_hooks(HookContext(event))
     asyncio.run(lifecycle(HookEvent.STARTUP))

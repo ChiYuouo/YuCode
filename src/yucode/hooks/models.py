@@ -14,6 +14,7 @@ class HookEvent(str, Enum):
     PRE_SEND = "pre_send"; POST_RECEIVE = "post_receive"
     STARTUP = "startup"; SHUTDOWN = "shutdown"; ERROR = "error"; COMPACT = "compact"
     PERMISSION_REQUEST = "permission_request"; FILE_CHANGE = "file_change"; COMMAND_EXECUTE = "command_execute"
+    TASK_START = "task_start"; TASK_STOP = "task_stop"; TASK_COMPLETE = "task_complete"; SEND_MESSAGE = "send_message"
 
 
 class ActionType(str, Enum):
@@ -58,6 +59,12 @@ class Hook:
     once: bool = False
     async_run: bool = False
     source_index: int = 0
+    identifier: str | None = None
+
+
+def hook_label(hook: Hook) -> str:
+    """诊断用的规则指称：优先用配置里的 id，未命名时退回声明顺序。"""
+    return f"Hook「{hook.identifier}」" if hook.identifier else f"Hook 第 {hook.source_index} 条"
 
 
 @dataclass(frozen=True)
@@ -68,6 +75,9 @@ class HookContext:
     message: str = ""
     error: str = ""
     tool_args: Mapping[str, Any] = field(default_factory=dict)
+    task_id: str = ""
+    parent_task_id: str = ""
+    task_status: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,4 +87,3 @@ class HookRunResult:
 
 class ToolRejectedError(Exception):
     """Hook 拒绝工具调用时使用的内部信号。"""
-

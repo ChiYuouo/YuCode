@@ -74,9 +74,10 @@ class WelcomePanel(Static):
         "   ╚═╝     ╚═════╝   ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝"
     )
 
-    def __init__(self, provider: str, model: str) -> None:
+    def __init__(self, provider: str, model: str, workspace_root: Path | None = None) -> None:
         self._provider = provider
         self._model = model
+        self._workspace_root = workspace_root or Path.cwd()
         self._mcp_status = "正在加载 MCP 工具…"
         super().__init__(id="welcome-panel")
         self._refresh()
@@ -90,7 +91,7 @@ class WelcomePanel(Static):
         content = Text(justify="center")
         content.append(self._WORDMARK, style="bold #f4a261")
         content.append("\n◆ ─────────── ◇ ─────────── ◆", style="#63d8ef")
-        content.append(f"\n目录  {Path.cwd()}", style="#b8c4c7")
+        content.append(f"\n目录  {self._workspace_root}", style="#b8c4c7")
         content.append(f"\n模型  {self._provider} / {self._model}", style="#b8c4c7")
         content.append(f"\n{self._mcp_status}", style="#63d8ef")
         self.update(content)

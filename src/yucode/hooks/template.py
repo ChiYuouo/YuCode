@@ -7,7 +7,7 @@ import re
 from yucode.hooks.conditions import context_value, validate_field
 from yucode.hooks.models import HookContext
 
-_VARIABLE = re.compile(r"\$(EVENT|TOOL_NAME|FILE_PATH|MESSAGE|ERROR|TOOL_ARGS(?:\.[A-Za-z_][A-Za-z0-9_]*)+)")
+_VARIABLE = re.compile(r"\$(EVENT|TOOL_NAME|FILE_PATH|MESSAGE|ERROR|TASK_ID|PARENT_TASK_ID|TASK_STATUS|TOOL_ARGS(?:\.[A-Za-z_][A-Za-z0-9_]*)+)")
 _DOLLAR_WORD = re.compile(r"\$([A-Z][A-Z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
 
 

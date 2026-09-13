@@ -15,7 +15,7 @@ from yucode.tools.base import ToolCall, ToolResult
 from yucode.tools.registry import ToolRegistry
 from yucode.tui.app import ChatApp
 from yucode.tui.widgets import (
-    AssistantMessage, ChatStatus, Composer, ContextActivity, ErrorMessage, GenerationIndicator, NoticeMessage,
+    AssistantMessage, ChatStatus, Composer, ContextActivity, ErrorMessage, NoticeMessage,
     InlinePermissionCard, ModeMenu, PendingToolActivity, SessionPicker, ThinkingBox, ToolActivity, WelcomePanel,
 )
 from yucode.sessions import SessionManager

@@ -4,10 +4,24 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yucode"
-version = "0.1.0"
+dynamic = ["version"]
 description = "一个支持多模型流式对话的终端 AI 助手"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "池鱼" }]
+keywords = ["ai", "cli", "coding-assistant", "llm", "agent", "terminal"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: System :: Shells",
+]
 dependencies = [
     "httpx>=0.27",
     "PyYAML>=6.0",
@@ -21,12 +35,26 @@ yucode = "yucode.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.6",
 ]
+
+[tool.hatch.version]
+path = "src/yucode/__init__.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
 
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+
+[tool.ruff.lint]
+# 只启用能发现真实问题的规则。E701/E702 是项目刻意的紧凑写法（`a = 1; b = 2`），
+# 不作为门禁；行长限制由 line-length 控制，不额外报 E501。
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E501", "E701", "E702"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/yucode"]
-artifacts = ["src/yucode/skills/builtin/**/*.md"]
+artifacts = ["src/yucode/skills/builtin/**/*.md", "src/yucode/subagents/builtin/**/*.md"]

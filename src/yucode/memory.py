@@ -7,7 +7,6 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
-import json
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4

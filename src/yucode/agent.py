@@ -24,12 +24,13 @@ from yucode.hooks.models import HookContext, HookEvent
 from yucode.providers.base import Provider, ProviderError, StreamCancelled, Usage
 from yucode.tools.base import ToolCall, ToolResult
 from yucode.tools.executor import ToolExecutor
-from yucode.tools.registry import ToolRegistry
+from yucode.tools.base import ToolCatalog, ToolView
 from yucode.workflow import ToolWorkflow
 from yucode.sessions import RecoveredSession
 from yucode.skills.prompt import build_skill_prompt_state
 from yucode.skills.runtime import SkillRuntime
 from yucode.skills.tools import InstallSkillTool, LoadSkillTool, build_skill_view
+from yucode.teams.coordinator import allowed_names
 
 
 class StopReason(str, Enum):
@@ -133,7 +134,7 @@ class Agent:
         self,
         provider: Provider,
         conversation: Conversation,
-        registry: ToolRegistry,
+        registry: ToolCatalog,
         max_iterations: int = 10,
         prompt_builder: SystemPromptBuilder | None = None,
         permissions: PermissionManager | None = None,
@@ -141,6 +142,11 @@ class Agent:
         memory_manager: MemoryManager | None = None,
         skill_runtime: SkillRuntime | None = None,
         hook_engine: HookEngine | None = None,
+        subagent_service=None,
+        worktree_manager=None,
+        runtime_notices: tuple[str, ...] = (),
+        team_service=None,
+        coordinator_mode: bool = False,
     ) -> None:
         if max_iterations <= 0:
             raise ValueError("max_iterations 必须是正整数。")
@@ -149,6 +155,11 @@ class Agent:
         self._registry = registry
         self._permissions = permissions or PermissionManager(registry.context.root)
         self._hooks = hook_engine
+        self._subagents = subagent_service
+        self._worktrees = worktree_manager
+        self.team_service = team_service
+        self._coordinator_mode = coordinator_mode
+        self._runtime_notices = runtime_notices
         self._executor = ToolExecutor(registry, self._permissions, hook_engine)
         self._max_iterations = max_iterations
         self._prompt_builder = prompt_builder or SystemPromptBuilder()
@@ -157,6 +168,26 @@ class Agent:
         self._memory = memory_manager
         self._skills = skill_runtime
         self._system_tools = (LoadSkillTool(skill_runtime), InstallSkillTool(skill_runtime)) if skill_runtime is not None else ()
+        if subagent_service is not None:
+            from yucode.subagents.tool import AgentTool
+            subagent_service.bind_parent(self)
+            self._system_tools = (*self._system_tools, AgentTool(subagent_service))
+        if team_service is not None and team_service.config.enabled:
+            from yucode.teams.tools import (
+                SendMessageTool, TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool,
+                TeamCreateTool, TeamDeleteTool, TeamMergeTool, TeamSpawnTool, TeamStopTool,
+            )
+            self._system_tools = (*self._system_tools,
+                TeamCreateTool(team_service), TeamDeleteTool(team_service), TeamSpawnTool(team_service),
+                TeamStopTool(team_service), TeamMergeTool(team_service), TaskCreateTool(team_service),
+                TaskGetTool(team_service), TaskListTool(team_service), TaskUpdateTool(team_service),
+                SendMessageTool(team_service),
+            )
+            # 独立构造的 Lead（例如测试或嵌入式调用）同样可以派生成员；CLI
+            # 会在稍后用项目配置过的 Factory 覆盖该默认实例。
+            from yucode.subagents.factory import SubagentFactory
+            from yucode.subagents.policy import ToolPolicy
+            team_service.bind_parent(self, SubagentFactory(ToolPolicy()))
         self._recovery_time_gap: str | None = None
         self._recovery_context_guard = False
 
@@ -170,6 +201,11 @@ class Agent:
 
     def estimated_context_tokens(self) -> int:
         return self._context.estimated_tokens()
+
+    @property
+    def workspace_root(self):
+        """当前会话使用的显式工作目录。"""
+        return self._worktrees.current_root() if self._worktrees is not None else self._registry.context.root
 
     def reset_session_state(self) -> None:
         """新会话只清空对话相关状态，保留权限和长时组件。"""
@@ -223,6 +259,8 @@ class Agent:
         cancellation: Cancellation,
         approve: ApprovalCallback | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        # 当前回合固定根目录；命令切换不会让同一轮工具调用漂移到另一 Worktree。
+        workspace_root = self.workspace_root.resolve()
         turn_start = len(self._conversation.messages)
         if self._hooks is not None:
             await self._hooks.run_hooks(HookContext(HookEvent.TURN_START, message=text))
@@ -235,7 +273,7 @@ class Agent:
         is_plan = self._permissions.mode is PermissionMode.PLAN
         runtime_mode = "plan" if is_plan else "full"
         authorization = classify_authorization(text, runtime_mode)
-        workflow = ToolWorkflow(self._registry.context.root)
+        workflow = ToolWorkflow(workspace_root)
         emergency_retried = False
 
         for iteration in range(1, self._max_iterations + 1):
@@ -254,14 +292,14 @@ class Agent:
             requires_verification = bool(workflow.pending_verifications)
             requires_guarded_response = requires_verification
             try:
-                view, skill_state = self._skill_view()
+                view, skill_state = self._skill_view(workspace_root)
                 tools = view.read_only_definitions if is_plan else view.definitions
                 async for result in self._context.prepare_request(tools, cancellation):
                     yield ContextUpdated(result)
                 recovery_guarded_request = self._recovery_context_guard
                 request = self._prompt_builder.build(
                     RuntimeContext(
-                        self._registry.context.root,
+                        workspace_root,
                         runtime_mode,
                         iteration,
                         authorization.value,
@@ -277,6 +315,13 @@ class Agent:
                     prompts = self._hooks.drain_prompts()
                     if prompts:
                         request = replace(request, runtime_messages=(*request.runtime_messages, *(RuntimeMessage(item) for item in prompts)))
+                if self._subagents is not None:
+                    notifications = self._subagents.drain_notifications()
+                    if notifications:
+                        items = tuple(RuntimeMessage(f"<task-notification task_id=\"{item.task_id}\" status=\"{item.status.value}\">\n{item.summary}\n</task-notification>") for item in notifications)
+                        request = replace(request, runtime_messages=(*request.runtime_messages, *items))
+                if self._runtime_notices:
+                    request = replace(request, runtime_messages=(*request.runtime_messages, *(RuntimeMessage(item) for item in self._runtime_notices)))
                 self._recovery_time_gap = None
                 self._recovery_context_guard = False
                 async for event in self._provider.stream(request, cancellation):
@@ -414,11 +459,29 @@ class Agent:
                     yield event
                 return
 
-    def _skill_view(self):
+    def _skill_view(self, workspace_root=None):
+        if not hasattr(self._registry, "view"):
+            return self._registry, None
         if self._skills is None:
-            return self._registry.view(), None
+            view = self._registry.view_for(workspace_root) if workspace_root is not None and hasattr(self._registry, "view_for") else self._registry.view()
+            if not self._system_tools:
+                if self._coordinator_mode:
+                    permitted = allowed_names({item.name for item in view.definitions}, True)
+                    view = ToolView(view.context, {item.name: view.get(item.name) for item in view.definitions if item.name in permitted})
+                return view, None
+            tools = {item.name: view.get(item.name) for item in view.definitions}
+            tools.update({item.definition.name: item for item in self._system_tools})
+            tools = {name: item for name, item in tools.items() if item is not None}
+            if self._coordinator_mode:
+                permitted = allowed_names(set(tools), True)
+                tools = {name: item for name, item in tools.items() if name in permitted}
+            return ToolView(view.context, tools), None
         snapshot = self._skills.snapshot()
-        view = build_skill_view(self._registry, snapshot, self._system_tools)
+        catalog = self._registry.view_for(workspace_root) if workspace_root is not None and hasattr(self._registry, "view_for") else self._registry
+        view = build_skill_view(catalog, snapshot, self._system_tools)
+        if self._coordinator_mode:
+            permitted = allowed_names({item.name for item in view.definitions}, True)
+            view = ToolView(view.context, {item.name: view.get(item.name) for item in view.definitions if item.name in permitted})
         return view, build_skill_prompt_state(snapshot, tuple(item.name for item in view.definitions))
 
     async def _finish(

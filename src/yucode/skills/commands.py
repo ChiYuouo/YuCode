@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from yucode.commands.models import CommandContext, CommandDefinition, CommandKind, CommandUsageError
+from yucode.commands.models import CommandContext, CommandDefinition, CommandKind
 from yucode.skills.runtime import SkillRuntime
 from yucode.skills.models import SkillMode
 from yucode.skills.execution import run_fork

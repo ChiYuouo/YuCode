@@ -9,13 +9,15 @@ from typing import Any
 
 from yucode.hooks.models import Condition, ConditionGroup, ConditionOperator, HookContext
 
-_FIELDS = {"EVENT", "TOOL_NAME", "FILE_PATH", "MESSAGE", "ERROR"}
+_FIELDS = {"EVENT", "TOOL_NAME", "FILE_PATH", "MESSAGE", "ERROR", "TASK_ID", "PARENT_TASK_ID", "TASK_STATUS"}
+_CONDITION_KEYS = {"field", "operator", "value"}
 
 
 def context_value(context: HookContext, field: str) -> str:
     """读取固定字段或嵌套工具参数；不存在时返回空字符串。"""
     values = {"EVENT": context.event.value, "TOOL_NAME": context.tool_name, "FILE_PATH": context.file_path,
-              "MESSAGE": context.message, "ERROR": context.error}
+              "MESSAGE": context.message, "ERROR": context.error, "TASK_ID": context.task_id,
+              "PARENT_TASK_ID": context.parent_task_id, "TASK_STATUS": context.task_status}
     if field in values:
         return values[field]
     if field.startswith("TOOL_ARGS."):
@@ -46,6 +48,8 @@ def parse_condition_group(raw: Any) -> ConditionGroup:
     conditions: list[Condition] = []
     for item in entries:
         if not isinstance(item, Mapping): raise ValueError("每个条件必须是键值对象。")
+        unknown = set(item) - _CONDITION_KEYS
+        if unknown: raise ValueError(f"条件包含未知字段：{sorted(unknown, key=str)[0]}。")
         field = validate_field(item.get("field")); value = item.get("value")
         if not isinstance(value, str): raise ValueError("条件 value 必须是字符串。")
         try: operator = ConditionOperator(item.get("operator"))

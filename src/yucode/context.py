@@ -18,7 +18,6 @@ from yucode.prompting import ModelRequest
 from yucode.providers.base import (
     Message,
     Provider,
-    StreamEvent,
     StreamCancelled,
     TextContent,
     ToolCallContent,

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from hashlib import sha256
-import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from yucode import userdirs
 from yucode.skills.models import (
     HistoryScope,
     SkillCatalog,
@@ -33,9 +33,7 @@ class SkillLoader:
         builtin_root: Path | None = None,
     ) -> None:
         self._project_root = (project_root / ".yucode" / "skills").resolve()
-        appdata = os.environ.get("APPDATA")
-        default_user = Path(appdata) / "YuCode" / "skills" if appdata else Path.home() / ".yucode" / "skills"
-        self._user_root = (user_root or default_user).resolve()
+        self._user_root = (user_root or userdirs.resolve_path("skills")).resolve()
         self._builtin_root = (builtin_root or Path(__file__).with_name("builtin")).resolve()
 
     @property

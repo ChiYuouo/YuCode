@@ -106,18 +106,47 @@ def test_requires_config_file(tmp_path: Path) -> None:
 
 
 def test_merges_user_and_project_mcp_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    appdata = tmp_path / "AppData"
-    user = appdata / "YuCode"
+    monkeypatch.setenv("APPDATA", str(tmp_path / "no-legacy"))
+    home = tmp_path / "home"
+    user = home / ".yucode"
     user.mkdir(parents=True)
     (user / "yucode.yaml").write_text(
         "mcp_servers:\n  user_only:\n    transport: stdio\n    command: user\n  replaced:\n    transport: stdio\n    command: old\n",
         encoding="utf-8",
     )
     project = write_config(tmp_path, "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\nmcp_servers:\n  replaced:\n    transport: stdio\n    command: new\n  project_only:\n    transport: http\n    url: https://mcp.test\n")
-    monkeypatch.setenv("APPDATA", str(appdata))
-    config = load_config(project)
+    config = load_config(project, home=home)
     assert {server.name for server in config.mcp_servers} == {"user_only", "replaced", "project_only"}
     assert next(server for server in config.mcp_servers if server.name == "replaced").command == "new"
+
+
+def test_user_mcp_config_falls_back_to_legacy_appdata_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """升级前放在 %APPDATA%\\YuCode 的用户级配置仍应被读取。"""
+    legacy = tmp_path / "AppData" / "YuCode"
+    legacy.mkdir(parents=True)
+    (legacy / "yucode.yaml").write_text(
+        "mcp_servers:\n  legacy_only:\n    transport: stdio\n    command: legacy\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+    project = write_config(tmp_path, "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\n")
+    config = load_config(project, home=tmp_path / "home")
+    assert {server.name for server in config.mcp_servers} == {"legacy_only"}
+
+
+def test_user_mcp_config_works_without_appdata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """非 Windows 平台没有 APPDATA，用户级配置同样必须生效。"""
+    monkeypatch.delenv("APPDATA", raising=False)
+    home = tmp_path / "home"
+    user = home / ".yucode"
+    user.mkdir(parents=True)
+    (user / "yucode.yaml").write_text(
+        "mcp_servers:\n  user_only:\n    transport: stdio\n    command: user\n",
+        encoding="utf-8",
+    )
+    project = write_config(tmp_path, "protocol: openai\nmodel: x\nbase_url: https://x.test\napi_key: key\n")
+    config = load_config(project, home=home)
+    assert {server.name for server in config.mcp_servers} == {"user_only"}
 
 
 def test_mcp_expands_variables_and_keeps_bad_server_as_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

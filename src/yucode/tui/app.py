@@ -22,6 +22,7 @@ from yucode.config import ProviderConfig
 from yucode.mcp.manager import MCPManager
 from yucode.permissions import ApprovalChoice, PermissionMode, PermissionRequest
 from yucode.providers.base import CacheUsage, TextContent, ToolResultContent
+from yucode.subagents.models import TaskNotification
 from yucode.skills.runtime import SkillConfigurationError
 from yucode.tui.widgets import (
     AssistantMessage, ContextActivity, ForkActivity,
@@ -64,6 +65,7 @@ class ChatApp(App[None]):
     CSS_PATH = "app.tcss"
     BINDINGS = [
         ("ctrl+c", "cancel_generation", "停止生成"),
+        ("escape", "background_generation", "转入后台"),
         ("shift+tab", "cycle_permission_mode", "切换权限模式"),
     ]
     _PERMISSION_MODES = (
@@ -104,7 +106,7 @@ class ChatApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield VerticalScroll(
-            WelcomePanel(self._config.protocol, self._config.model), id="chat-view"
+            WelcomePanel(self._config.protocol, self._config.model, self._agent.workspace_root), id="chat-view"
         )
         yield ModeMenu()
         yield Composer(
@@ -116,6 +118,12 @@ class ChatApp(App[None]):
         prompt = self.query_one(Composer)
         prompt.disabled = True
         self._show_permission_mode()
+        service = getattr(self._agent, "_subagents", None)
+        if service is not None:
+            service.set_notification_listener(self.show_task_notification)
+        cleanup = getattr(self._agent, "worktree_cleanup", None)
+        if cleanup is not None:
+            cleanup.start()
         self.set_interval(0.8, self._show_memory_diagnostics)
         self._refresh_status("正在加载 MCP 工具")
         self._load_mcp()
@@ -152,6 +160,9 @@ class ChatApp(App[None]):
         """先释放 MCP 子进程和连接，再结束终端会话。"""
         if self._memory is not None:
             await self._memory.wait_for_pending_updates()
+        cleanup = getattr(self._agent, "worktree_cleanup", None)
+        if cleanup is not None:
+            await cleanup.stop()
         await self._mcp_manager.close()
         self.exit()
 
@@ -651,6 +662,9 @@ class ChatApp(App[None]):
     async def request_exit(self) -> None:
         if self._memory is not None:
             await self._memory.wait_for_pending_updates()
+        cleanup = getattr(self._agent, "worktree_cleanup", None)
+        if cleanup is not None:
+            await cleanup.stop()
         await self._mcp_manager.close()
         super().exit()
 
@@ -685,6 +699,14 @@ class ChatApp(App[None]):
         if self._generating and self._cancellation is not None:
             self._cancellation.cancel()
             self._resolve_active_permission(ApprovalChoice.REJECT)
+
+    def action_background_generation(self) -> None:
+        """优先把当前可切换的子任务转后台。"""
+        service = getattr(self._agent, "_subagents", None)
+        task = service.promote_foreground() if service is not None else None
+        if task is not None:
+            self._show_notice(f"子 Agent 已转入后台，任务标识：{task.id}。")
+            self._refresh_status("子 Agent 正在后台执行")
 
     async def _request_permission_approval(self, request: PermissionRequest) -> ApprovalChoice:
         loop = asyncio.get_running_loop()
@@ -735,6 +757,20 @@ class ChatApp(App[None]):
         await message.append_text(text)
         message.finish()
         self._scroll_to_latest(chat)
+
+    async def show_task_notification(self, notification: TaskNotification) -> None:
+        """后台子 Agent 一结束便直接回显摘要，不必等待下一次用户输入。"""
+        chat = self.query_one("#chat-view", VerticalScroll)
+        message = AssistantMessage()
+        await chat.mount(message)
+        await message.append_text(
+            f"子 Agent 任务 {notification.task_id} 已{_task_status_text(notification.status.value)}。\n\n"
+            f"{notification.summary}\n\n"
+            f"用量：输入 {notification.usage.input_tokens} · 输出 {notification.usage.output_tokens}"
+        )
+        message.finish()
+        self._scroll_to_latest(chat)
+        self._refresh_status("子 Agent 已返回结果")
 
     def handle_permission_key(self, event) -> bool:
         """当输入框仍持有焦点时，也优先把确认键交给活动卡片。"""
@@ -809,3 +845,7 @@ def _context_text(result) -> str:
     if result.status == "compacted":
         return f"已压缩上下文 · {result.before_tokens} → {result.after_tokens} 估算 Token"
     return result.detail
+
+
+def _task_status_text(status: str) -> str:
+    return {"completed": "完成", "failed": "失败", "cancelled": "取消", "timed_out": "超时"}.get(status, "结束")

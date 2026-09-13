@@ -409,6 +409,18 @@ def _path_argument(call: ToolCall) -> str | None:
 
 
 def _subject(call: ToolCall, root: Path) -> str:
+    if call.name in {"TeamCreate", "TeamDelete", "TeamMerge"}:
+        value = call.arguments.get("name", call.arguments.get("team"))
+        return value if isinstance(value, str) else ""
+    if call.name in {"TeamSpawn", "TeamStop"}:
+        team = call.arguments.get("team")
+        member = call.arguments.get("member")
+        if isinstance(team, str) and isinstance(member, str):
+            return f"{team}/{member}"
+        return ""
+    if call.name in {"SendMessage", "TaskCreate", "TaskUpdate"}:
+        value = call.arguments.get("team")
+        return value if isinstance(value, str) else ""
     if call.name == "run_command":
         return _command_argument(call) or ""
     if call.name in _FILE_PATH_TOOLS:

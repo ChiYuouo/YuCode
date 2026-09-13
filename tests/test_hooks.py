@@ -8,7 +8,7 @@ import pytest
 from yucode.hooks.conditions import matches, parse_condition_group
 from yucode.hooks.engine import HookEngine
 from yucode.hooks.loader import load_hooks
-from yucode.hooks.models import HookContext, HookEvent, ToolRejectedError
+from yucode.hooks.models import HookContext, HookEvent, ToolRejectedError, hook_label
 from yucode.hooks.template import render_template
 
 
@@ -28,6 +28,49 @@ def test_loader_rejects_async_reject_and_accepts_agent_stub() -> None:
     with pytest.raises(ValueError, match="不允许 async"):
         load_hooks([{"event": "pre_tool_use", "async": True, "action": {"type": "prompt", "prompt": "x", "reject": True, "reason": "no"}}])
     assert load_hooks([{"event": "startup", "action": {"type": "agent"}}])[0].action.type.value == "agent"
+
+
+def test_rule_action_and_condition_reject_unknown_fields() -> None:
+    """未知键必须报错，不能静默忽略——写错字段名等于规则悄悄失效。"""
+    with pytest.raises(ValueError, match="包含未知字段：onces"):
+        load_hooks([{"event": "startup", "onces": True, "action": {"type": "prompt", "prompt": "x"}}])
+    with pytest.raises(ValueError, match="action 包含未知字段：propmt"):
+        load_hooks([{"event": "startup", "action": {"type": "prompt", "propmt": "x"}}])
+    with pytest.raises(ValueError, match="条件包含未知字段：opperator"):
+        load_hooks([{
+            "event": "startup",
+            "if": {"all": [{"field": "EVENT", "operator": "==", "opperator": "x", "value": "startup"}]},
+            "action": {"type": "prompt", "prompt": "x"},
+        }])
+
+
+def test_hook_id_is_kept_for_diagnostics() -> None:
+    named = load_hooks([{"id": "block-json", "event": "startup", "action": {"type": "prompt", "prompt": "x"}}])[0]
+    assert named.identifier == "block-json"
+    assert hook_label(named) == "Hook「block-json」"
+    unnamed = load_hooks([{"event": "startup", "action": {"type": "prompt", "prompt": "x"}}])[0]
+    assert unnamed.identifier is None
+    assert hook_label(unnamed) == "Hook 第 1 条"
+
+
+def test_hook_errors_are_named_when_id_present() -> None:
+    with pytest.raises(ValueError, match="Hook「门禁」"):
+        load_hooks([{"id": "门禁", "event": "not_an_event", "action": {"type": "prompt", "prompt": "x"}}])
+    with pytest.raises(ValueError, match="Hook 第 2 条"):
+        load_hooks([
+            {"event": "startup", "action": {"type": "prompt", "prompt": "x"}},
+            {"event": "not_an_event", "action": {"type": "prompt", "prompt": "x"}},
+        ])
+
+
+def test_hook_rejects_duplicate_or_invalid_id() -> None:
+    rule = {"id": "same", "event": "startup", "action": {"type": "prompt", "prompt": "x"}}
+    with pytest.raises(ValueError, match="id 重复：same"):
+        load_hooks([rule, dict(rule)])
+    with pytest.raises(ValueError, match="id 必须是非空字符串"):
+        load_hooks([{"id": "  ", "event": "startup", "action": {"type": "prompt", "prompt": "x"}}])
+    with pytest.raises(ValueError, match="id 必须是非空字符串"):
+        load_hooks([{"id": 7, "event": "startup", "action": {"type": "prompt", "prompt": "x"}}])
 
 
 def test_engine_once_prompt_and_tool_rejection(tmp_path: Path) -> None:
