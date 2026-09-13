@@ -16,7 +16,7 @@ class ForkResult:
     cancelled: bool = False
 
 
-async def run_fork(parent: Agent, active: ActiveSkill, arguments: str, approve: ApprovalCallback | None = None, progress=None) -> ForkResult:
+async def run_fork(parent: Agent, active: ActiveSkill, arguments: str, approve: ApprovalCallback | None = None) -> ForkResult:
     """保留旧调用面，但不再创建独立的旧式 Agent Loop。"""
     service = getattr(parent, "_subagents", None)
     if service is None:

@@ -21,7 +21,9 @@ from yucode.teams.tasks import TeamTaskStore
 from yucode.worktrees.manager import WorktreeManager
 from yucode.teams.merge import TeamMergeResult, TeamMergeService
 from yucode.subagents.factory import SubagentFactory
+from yucode.subagents.models import SubagentKind, TaskOutcome, TaskStatus
 from yucode.subagents.runner import RunToCompletion
+from yucode.subagents.tasks import TaskManager
 from yucode.cancellation import Cancellation
 from yucode.sessions import SessionManager
 from yucode.conversation import Conversation
@@ -44,6 +46,8 @@ class TeamService:
         self.tasks = TeamTaskStore(); self.mailbox = MailboxStore(config.mailbox_lock_timeout_seconds)
         self._merger = TeamMergeService(self._workspace, scaffolding=getattr(worktrees, "scaffolding_paths", ()))
         self._parent = None; self._factory: SubagentFactory | None = None; self._running: dict[str, asyncio.Task[None]] = {}
+        self._tasks: TaskManager | None = None
+        self._member_tasks: dict[str, tuple[str, dict]] = {}
         self._notifications: list[str] = []
         self._notification_listener = None
 
@@ -53,6 +57,8 @@ class TeamService:
     def bind_parent(self, parent, factory: SubagentFactory) -> None:
         """绑定 Lead；只有 Lead 可启动具备独立 Conversation 的成员。"""
         self._parent = parent; self._factory = factory
+        service = getattr(parent, "_subagents", None)
+        self._tasks = service.tasks if service is not None else TaskManager()
 
     def list(self) -> tuple[AgentTeam, ...]:
         return self.repository.list()
@@ -195,8 +201,17 @@ class TeamService:
         if member is None:
             raise TeamServiceError(f"找不到成员：{member_name}。")
         await self.send(team.name, team.lead_id, (member.name,), "Lead 已请求停止当前工作。", MessageKind.SHUTDOWN)
+        entry = self._member_tasks.pop(member.agent_id, None)
         worker = self._running.pop(member.agent_id, None)
-        if worker is not None and not worker.done():
+        if entry is not None and self._tasks is not None:
+            task_id, flags = entry
+            flags["lead_stopped"] = True
+            self._tasks.cancel(task_id)
+            managed = self._tasks.worker_for(task_id)
+            if managed is not None and not managed.done():
+                with suppress(asyncio.CancelledError):
+                    await managed
+        elif worker is not None and not worker.done():
             worker.cancel()
             with suppress(asyncio.CancelledError):
                 await worker
@@ -282,9 +297,11 @@ class TeamService:
             # PermissionManager 仍会先执行危险命令、目录边界、规则拒绝和工作流检查。
             return ApprovalChoice.ONCE
 
-        async def work() -> None:
+        flags = {"lead_stopped": False}
+
+        async def member_work(cancellation: Cancellation) -> TaskOutcome:
             try:
-                outcome = await RunToCompletion().run(child, effective_prompt, Cancellation(), approve_delegated_work)
+                outcome = await RunToCompletion().run(child, effective_prompt, cancellation, approve_delegated_work)
                 latest = self.get(team_name)
                 current = next(item for item in latest.members if item.name == member_name)
                 state = MemberState.IDLE if outcome.status.value == "completed" else MemberState.FAILED
@@ -301,7 +318,22 @@ class TeamService:
                 self.update_member(latest, replace(current, state=state))
                 await self.send(team_name, member_name, (), outcome.summary, MessageKind.BROADCAST, "成员任务已结束。")
                 self._notifications.append(f"成员 {member_name} 已{('完成' if state is MemberState.IDLE else '失败')}：\n{outcome.summary}")
+                return outcome
             except asyncio.CancelledError:
+                # Lead 主动停止由 stop() 收尾；超时或 /tasks cancel 时在此标记失败并报告 Lead。
+                if not flags["lead_stopped"]:
+                    with suppress(Exception):
+                        latest = self.get(team_name)
+                        current = next((item for item in latest.members if item.name == member_name), None)
+                        if current is not None:
+                            self.update_member(latest, replace(current, state=MemberState.FAILED))
+                            if task_id is not None:
+                                with suppress(Exception):
+                                    self.tasks.update(latest, task_id, state=TeamTaskState.READY)
+                            summary = f"成员 {member_name} 已超时或被取消，任务未完成。"
+                            with suppress(Exception):
+                                await self.send(team_name, member_name, (), summary, MessageKind.BROADCAST, "成员任务被终止。")
+                            self._notifications.append(summary)
                 raise
             except Exception as error:
                 latest = self.get(team_name)
@@ -314,10 +346,16 @@ class TeamService:
                 with suppress(Exception):
                     await self.send(team_name, member_name, (), summary, MessageKind.BROADCAST, "成员运行失败。")
                 self._notifications.append(summary)
+                return TaskOutcome(TaskStatus.FAILED, summary, error=str(error))
             finally:
                 self._running.pop(member.agent_id, None)
+                self._member_tasks.pop(member.agent_id, None)
 
-        self._running[member.agent_id] = asyncio.create_task(work())
+        if self._tasks is None:
+            self._tasks = TaskManager()
+        snapshot = self._tasks.start(SubagentKind.TEAM_MEMBER, member.role, member_work, background=True)
+        self._member_tasks[member.agent_id] = (snapshot.id, flags)
+        self._running[member.agent_id] = self._tasks.worker_for(snapshot.id)
         return running
 
     async def wait_member(self, agent_id: str) -> None:

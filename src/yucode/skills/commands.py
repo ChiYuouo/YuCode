@@ -37,8 +37,7 @@ class SkillCommandCatalog:
             if current.definition.mode is SkillMode.FORK:
                 await context.ui.show_message(f"正在独立执行 Skill「{current.definition.name}」…")
                 approve = getattr(context.ui, "request_skill_permission", None)
-                progress = getattr(context.ui, "show_skill_progress", None)
-                result = await run_fork(context.agent, current, arguments, approve, progress)
+                result = await run_fork(context.agent, current, arguments, approve)
                 context.agent.conversation.append_assistant(result.summary)
                 render_summary = getattr(context.ui, "show_skill_summary", None)
                 if render_summary is not None:
@@ -46,6 +45,14 @@ class SkillCommandCatalog:
                 else:
                     await context.ui.show_message(result.summary)
                 return
-            await context.ui.send_user_message(f"请严格执行已激活 Skill「{current.definition.name}」。用户参数：{arguments}")
+            message = (
+                f"用户已通过 /skill:{current.definition.name} 命令装载 inline Skill「{current.definition.name}」，"
+                f"其完整指令如下，请严格按指令执行，不要再次调用 LoadSkill：\n\n"
+                f"===== Skill「{current.definition.name}」指令开始 =====\n"
+                f"{current.rendered_sop}\n"
+                f"===== Skill 指令结束 =====\n\n"
+                f"用户参数：{arguments if arguments else '（无）'}"
+            )
+            await context.ui.send_user_message(message)
         name = f"skill:{definition.name}"
         return CommandDefinition(name, (), definition.description, f"/{name} [参数]", CommandKind.PROMPT, execute, "可选参数")

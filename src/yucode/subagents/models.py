@@ -24,6 +24,7 @@ class AgentModel(str, Enum):
 class SubagentKind(str, Enum):
     DEFINITION = "definition"
     FORK = "fork"
+    TEAM_MEMBER = "team_member"
 
 
 class AgentIsolation(str, Enum):
@@ -98,6 +99,7 @@ class TaskSnapshot:
     summary: str | None = None
     error: str | None = None
     usage: Usage = field(default_factory=Usage)
+    progress: str = ""
 
 
 @dataclass(frozen=True)

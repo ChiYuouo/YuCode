@@ -122,6 +122,7 @@ class ChatApp(App[None]):
         service = getattr(self._agent, "_subagents", None)
         if service is not None:
             service.set_notification_listener(self.show_task_notification)
+            service.tasks.set_progress_listener(self._on_task_progress)
         cleanup = getattr(self._agent, "worktree_cleanup", None)
         if cleanup is not None:
             cleanup.start()
@@ -756,6 +757,16 @@ class ChatApp(App[None]):
             self._fork_activity.set_progress(text)
         self._scroll_to_latest(chat)
         self._refresh_status(text)
+
+    async def _on_task_progress(self, task_id: str, text: str, result=None) -> None:
+        """后台任务进度上屏；工具结果同时用于收尾等待中的权限卡。"""
+        if result is not None:
+            card = self._permission_cards.pop(result.call_id, None)
+            if card is not None:
+                card.finish(result)
+                if self._active_permission_card is card:
+                    self._active_permission_card = self._latest_pending_card()
+        await self.show_skill_progress(f"任务 {task_id[:6]} · {text}")
 
     async def show_skill_summary(self, text: str) -> None:
         """将隔离任务的最终摘要作为 Markdown 回复显示。"""

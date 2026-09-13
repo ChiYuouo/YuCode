@@ -16,6 +16,20 @@ from yucode.subagents.tasks import TaskManager
 from yucode.tools.base import ToolResult
 
 
+class _ProgressSink:
+    """把子 Agent 执行事件转发给 TaskManager；任务标识在 start 后才可知。"""
+
+    def __init__(self, tasks: TaskManager) -> None:
+        self._tasks = tasks; self._task_id: str | None = None
+
+    def bind(self, task_id: str) -> None:
+        self._task_id = task_id
+
+    async def emit(self, text: str, result=None) -> None:
+        if self._task_id is not None:
+            await self._tasks.report_progress(self._task_id, text, result)
+
+
 class SubagentService:
     def __init__(self, loader: AgentDefinitionLoader, factory: SubagentFactory, tasks: TaskManager, runner: RunToCompletion | None = None, worktrees: WorktreeManager | None = None) -> None:
         self._loader = loader; self._factory = factory; self._tasks = tasks; self._runner = runner or RunToCompletion(); self._parent: Agent | None = None
@@ -45,9 +59,10 @@ class SubagentService:
                 return ToolResult(call_id, "Agent", False, f"无法创建隔离 Worktree：{error}", error_code="worktree_create_failed")
         notice = None if worktree is None else f"<worktree_notice>\n你正在隔离 Worktree 中执行。目录：{worktree.path}\n分支：{worktree.branch}\n所有项目文件与命令操作必须使用该目录。\n</worktree_notice>"
         child = self._factory.create_fork(parent, background=True) if request.kind is SubagentKind.FORK else self._factory.create_definition(parent, definition, background=background, workspace_root=worktree.path if worktree else None, notice=notice)
+        sink = _ProgressSink(self._tasks)
 
         async def work(cancellation: Cancellation):
-            outcome = await self._runner.run(child, request.prompt, cancellation, approve)
+            outcome = await self._runner.run(child, request.prompt, cancellation, approve, on_event=sink.emit)
             if worktree is not None:
                 try:
                     cleanup = self._worktrees.remove(worktree.slug, automatic=True)
@@ -58,6 +73,7 @@ class SubagentService:
             return outcome
 
         task = self._tasks.start(request.kind, definition.name if definition else None, work, background=background)
+        sink.bind(task.id)
         if background:
             return ToolResult(call_id, "Agent", True, f"子 Agent 已在后台启动，任务标识：{task.id}。", content=task.id)
         finished = await self._tasks.wait_foreground(task.id)

@@ -16,6 +16,8 @@ from yucode.subagents.trace import TraceRegistry
 
 TaskWork = Callable[[Cancellation], Awaitable[TaskOutcome]]
 NotificationListener = Callable[[TaskNotification], Awaitable[None]]
+# 进度监听：参数为(任务标识, 进度文本, 已完成的工具结果或 None)。
+ProgressListener = Callable[[str, str, "object | None"], Awaitable[None]]
 
 
 class TaskManager:
@@ -24,10 +26,31 @@ class TaskManager:
         self._tasks: dict[str, TaskSnapshot] = {}; self._workers: dict[str, asyncio.Task[None]] = {}; self._cancellations: dict[str, Cancellation] = {}
         self._notifications: list[TaskNotification] = []; self._foreground: str | None = None
         self._notification_listener: NotificationListener | None = None
+        self._progress_listener: ProgressListener | None = None
 
     def set_notification_listener(self, listener: NotificationListener | None) -> None:
         """设置界面回显入口；队列保留给主 Agent 后续请求使用。"""
         self._notification_listener = listener
+
+    def set_progress_listener(self, listener: ProgressListener | None) -> None:
+        """设置进度回显入口；监听异常不得影响任务执行。"""
+        self._progress_listener = listener
+
+    async def report_progress(self, task_id: str, text: str, result=None) -> None:
+        """更新任务进度快照并转发给界面；未知任务或监听异常一律吞掉。"""
+        if task_id not in self._tasks:
+            return
+        self._set(task_id, progress=text)
+        if self._progress_listener is None:
+            return
+        try:
+            await self._progress_listener(task_id, text, result)
+        except Exception:
+            pass
+
+    def worker_for(self, task_id: str) -> asyncio.Task[None] | None:
+        """返回任务的工作协程，供需要等待或取消的外部流程使用。"""
+        return self._workers.get(task_id)
 
     def start(self, kind: SubagentKind, definition_name: str | None, work: TaskWork, *, parent_task_id: str | None = None, background: bool = False) -> TaskSnapshot:
         task_id = uuid4().hex[:12]; now = datetime.now(UTC)
