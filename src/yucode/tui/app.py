@@ -136,7 +136,7 @@ class ChatApp(App[None]):
             try:
                 warnings = (*warnings, *skills.initialize())
             except SkillConfigurationError as error:
-                self._show_error(f"Skill 配置错误：{error}")
+                self._show_error(f"Skill 配置错误：{error}", label="启动失败")
                 await self._mcp_manager.close()
                 self.exit()
                 return
@@ -145,11 +145,11 @@ class ChatApp(App[None]):
         )
         for warning in warnings:
             if hasattr(warning, "server_name"):
-                self._show_error(f"MCP Server {warning.server_name} 未加载：{warning.reason}")
+                self._show_startup_notice(f"MCP Server {warning.server_name} 未加载：{warning.reason}")
             else:
-                self._show_error(warning.message)
+                self._show_startup_notice(warning.message)
         for warning in self._startup_warnings:
-            self._show_error(warning)
+            self._show_startup_notice(warning)
         prompt = self.query_one(Composer)
         prompt.disabled = False
         prompt.focus()
@@ -805,10 +805,14 @@ class ChatApp(App[None]):
         if self._pending_approval is not None and not self._pending_approval.done():
             self._pending_approval.set_result(choice)
 
-    def _show_error(self, content: str) -> None:
+    def _show_error(self, content: str, label: str = "请求失败") -> None:
         chat = self.query_one("#chat-view", VerticalScroll)
-        chat.mount(ErrorMessage(content))
+        chat.mount(ErrorMessage(content, label))
         self._scroll_to_latest(chat)
+
+    def _show_startup_notice(self, content: str) -> None:
+        """启动阶段的非致命提示；不是请求失败，因此不套用"请求失败"标签。"""
+        self._show_error(content, label="提示")
 
     def _show_notice(self, content: str) -> None:
         chat = self.query_one("#chat-view", VerticalScroll)

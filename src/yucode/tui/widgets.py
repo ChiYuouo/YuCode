@@ -347,10 +347,14 @@ class AssistantMessage(Vertical):
 
 
 class ErrorMessage(Static):
-    """以醒目但不打断会话的样式显示可恢复错误。"""
+    """以醒目但不打断会话的样式显示可恢复问题。
 
-    def __init__(self, content: str) -> None:
-        message = Text("! 请求失败：", style="bold #ff8170")
+    ``label`` 用于区分消息来源：默认的"请求失败"只应留给真正的模型请求失败；
+    启动阶段等非请求失败的提示应传入中性标签，避免把正常提示误报成故障。
+    """
+
+    def __init__(self, content: str, label: str = "请求失败") -> None:
+        message = Text(f"! {label}：", style="bold #ff8170")
         message.append(content, style="#ffb4a9")
         super().__init__(message, classes="message error-message")
 

@@ -12,6 +12,7 @@ from pathlib import Path
 
 USER_DIRECTORY = ".yucode"
 LEGACY_DIRECTORY = "YuCode"
+LEGACY_READ_PATHS = ("yucode.yaml", "skills")
 
 
 def user_root(home: Path | None = None) -> Path:
@@ -44,17 +45,20 @@ def resolve_path(relative: str, home: Path | None = None) -> Path:
 
 
 def migration_warnings() -> tuple[str, ...]:
-    """旧目录仍有内容时给出一次中文迁移提示。"""
+    """旧目录中仍被读取的内容存在时，给出一次中文迁移提示。
+
+    只检查 ``LEGACY_READ_PATHS``：这些是 YuCode 架构上确实会从旧位置读取的路径。
+    旧目录里的其他残留（例如早期开发留下的目录）不会被读取，因此不触发提示，
+    否则提示会因为无关文件而永远消不掉。
+    """
     legacy = legacy_root()
-    if legacy is None or not legacy.is_dir():
+    if legacy is None:
         return ()
-    try:
-        has_content = any(legacy.iterdir())
-    except OSError:
-        return ()
-    if not has_content:
+    pending = [name for name in LEGACY_READ_PATHS if (legacy / name).exists()]
+    if not pending:
         return ()
     return (
-        f"检测到旧版用户级目录：{legacy}。用户级数据已统一到 {user_root()}，"
-        f"建议把其中的 yucode.yaml、skills 等移动到新位置；新位置缺失时仍会读取旧目录。",
+        f"检测到旧版用户级目录：{legacy}（其中仍有 {'、'.join(pending)}）。"
+        f"用户级数据已统一到 {user_root()}，建议把这些内容移动到新位置；"
+        f"新位置缺失时仍会读取旧目录。",
     )

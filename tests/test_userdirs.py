@@ -49,7 +49,7 @@ def test_resolve_returns_new_location_when_neither_exists(tmp_path: Path, monkey
     assert userdirs.resolve_path("yucode.yaml", tmp_path / "home") == tmp_path / "home" / ".yucode" / "yucode.yaml"
 
 
-def test_migration_warning_only_when_legacy_has_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_migration_warning_only_for_paths_that_are_actually_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     appdata = tmp_path / "AppData"
     monkeypatch.setenv("APPDATA", str(appdata))
     assert userdirs.migration_warnings() == ()
@@ -59,7 +59,27 @@ def test_migration_warning_only_when_legacy_has_content(tmp_path: Path, monkeypa
     warnings = userdirs.migration_warnings()
     assert len(warnings) == 1
     assert "旧版用户级目录" in warnings[0]
+    assert "skills" in warnings[0]
     assert str(userdirs.user_root()) in warnings[0]
+
+
+def test_migration_warning_ignores_unrelated_leftovers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """旧目录里不被读取的残留不应触发提示，否则提示会因为无关文件永远消不掉。"""
+    legacy = tmp_path / "AppData" / "YuCode"
+    (legacy / "teams" / "demo").mkdir(parents=True)
+    (legacy / "teams" / "demo" / "team.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+    assert userdirs.migration_warnings() == ()
+
+
+def test_migration_warning_reports_legacy_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    legacy = tmp_path / "AppData" / "YuCode"
+    legacy.mkdir(parents=True)
+    (legacy / "yucode.yaml").write_text("mcp_servers: {}\n", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+    warnings = userdirs.migration_warnings()
+    assert len(warnings) == 1
+    assert "yucode.yaml" in warnings[0]
 
 
 def test_migration_warning_absent_without_appdata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

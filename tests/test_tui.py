@@ -32,10 +32,11 @@ class FakeProvider:
         yield StreamEvent("usage", usage=Usage(input_tokens=3, output_tokens=5, thinking_tokens=2))
 
 
-def app_for_test(provider=None, root: Path | None = None, permission_mode=PermissionMode.DEFAULT) -> ChatApp:
+def app_for_test(provider=None, root: Path | None = None, permission_mode=PermissionMode.DEFAULT, startup_warnings: tuple[str, ...] = ()) -> ChatApp:
     provider = provider or FakeProvider()
     registry = ToolRegistry(root or Path.cwd())
     agent = Agent(provider, Conversation(), registry, permissions=PermissionManager(registry.context.root, permission_mode))
+    agent.startup_warnings = startup_warnings
     return ChatApp(
         agent,
         ProviderConfig("anthropic", "claude-test", "https://example.test", "key", True),
@@ -278,7 +279,9 @@ def test_tui_error_and_cancel_restore_input() -> None:
             await pilot.press("enter")
             await pilot.pause(0.2)
             assert prompt.disabled is False
-            assert "服务暂不可用" in str(app.query_one(ErrorMessage).render())
+            rendered = str(app.query_one(ErrorMessage).render())
+            assert "服务暂不可用" in rendered
+            assert "请求失败" in rendered
 
     async def check_cancel() -> None:
         app = app_for_test(BlockingProvider())
@@ -620,6 +623,20 @@ def test_inline_permission_card_supports_arrow_enter_and_escape() -> None:
             assert card.choose_for_key("enter") is ApprovalChoice.SESSION
             assert card.choose_for_key("escape") is ApprovalChoice.REJECT
             await pilot.pause()
+
+    asyncio.run(check())
+
+
+def test_startup_warnings_are_not_labeled_as_request_failures() -> None:
+    """启动提示不属于请求失败，不能套用"请求失败"标签。"""
+    async def check() -> None:
+        app = app_for_test(startup_warnings=("检测到旧版用户级目录：C:\\legacy",))
+        async with app.run_test() as pilot:
+            await pilot.pause(0.3)
+            rendered = " ".join(str(widget.render()) for widget in app.query(ErrorMessage))
+            assert "检测到旧版用户级目录" in rendered
+            assert "提示" in rendered
+            assert "请求失败" not in rendered
 
     asyncio.run(check())
 
