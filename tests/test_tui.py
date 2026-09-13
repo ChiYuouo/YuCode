@@ -5,7 +5,7 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Markdown, OptionList
 
-from yucode.agent import Agent, ContextUpdated, ToolCallStarted, ToolResultReady
+from yucode.agent import Agent, AgentFinished, ContextUpdated, StopReason, ToolCallStarted, ToolResultReady
 from yucode.config import ProviderConfig
 from yucode.conversation import Conversation, ConversationEvent
 from yucode.context import ContextAction, ContextResult
@@ -623,6 +623,51 @@ def test_inline_permission_card_supports_arrow_enter_and_escape() -> None:
             assert card.choose_for_key("enter") is ApprovalChoice.SESSION
             assert card.choose_for_key("escape") is ApprovalChoice.REJECT
             await pilot.pause()
+
+    asyncio.run(check())
+
+
+def test_concurrent_permission_requests_resolve_independently(tmp_path: Path) -> None:
+    """两个并发权限请求（如后台子 Agent 与主会话）各自持有 Future，先后应答不串线。"""
+    async def check() -> None:
+        app = app_for_test(root=tmp_path)
+        async with app.run_test() as pilot:
+            manager = PermissionManager(tmp_path)
+            first = manager.request_for(ToolCall("call-1", "run_command", {"command": "Get-Location"}))
+            second = manager.request_for(ToolCall("call-2", "write_file", {"path": "a.txt", "content": "x"}))
+            task1 = asyncio.ensure_future(app._request_permission_approval(first))
+            task2 = asyncio.ensure_future(app._request_permission_approval(second))
+            await pilot.pause(0.2)
+            assert len(app.query(InlinePermissionCard)) == 2
+            # 应答最新一张（第二个请求），第一个请求不受影响。
+            await pilot.press("1")
+            await pilot.pause(0.2)
+            assert task2.done() and task2.result() is ApprovalChoice.ONCE
+            assert not task1.done()
+            # 焦点自动移交到仍在等待的第一张卡片，按键可继续应答。
+            await pilot.press("4")
+            await pilot.pause(0.2)
+            assert task1.done() and task1.result() is ApprovalChoice.REJECT
+            assert app._active_permission_card is None
+
+    asyncio.run(check())
+
+
+def test_generation_finish_keeps_pending_background_approval(tmp_path: Path) -> None:
+    """主回合结束不再清空权限状态：后台子 Agent 仍在等待的确认可以继续应答。"""
+    async def check() -> None:
+        app = app_for_test(root=tmp_path)
+        async with app.run_test() as pilot:
+            manager = PermissionManager(tmp_path)
+            request = manager.request_for(ToolCall("bg-1", "run_command", {"command": "yucode agent --goal 审查"}))
+            task = asyncio.ensure_future(app._request_permission_approval(request))
+            await pilot.pause(0.2)
+            # 模拟主回合正常结束（后台子 Agent 仍在等确认）。
+            app._finish_generation(AgentFinished(StopReason.COMPLETED, "已完成", Usage(3, 5)))
+            await pilot.pause(0.2)
+            await pilot.press("1")
+            await pilot.pause(0.2)
+            assert task.done() and task.result() is ApprovalChoice.ONCE
 
     asyncio.run(check())
 

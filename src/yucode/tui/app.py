@@ -88,7 +88,8 @@ class ChatApp(App[None]):
         self._assistant_message: AssistantMessage | None = None
         self._generating = False
         self._has_started_chat = False
-        self._pending_approval: asyncio.Future[ApprovalChoice] | None = None
+        # 并发权限请求按 call.id 各自持有 Future，后台子 Agent 的确认不与主会话互相覆盖。
+        self._pending_approvals: dict[str, asyncio.Future[ApprovalChoice]] = {}
         self._active_permission_card: InlinePermissionCard | None = None
         self._permission_cards: dict[str, InlinePermissionCard] = {}
         self._activity_timer: Timer | None = None
@@ -590,9 +591,8 @@ class ChatApp(App[None]):
         self._generating = False
         self._cancellation = None
         self._assistant_message = None
-        self._pending_approval = None
-        self._active_permission_card = None
-        self._permission_cards.clear()
+        # 不再清空权限确认状态：后台子 Agent 的请求可能仍在等待，各请求在自己的
+        # finally 中清理；这里清空会把它们正在等待的 Future 变成孤儿。
         prompt = self.query_one("#prompt", Composer)
         prompt.disabled = False
         prompt.focus()
@@ -711,7 +711,7 @@ class ChatApp(App[None]):
     async def _request_permission_approval(self, request: PermissionRequest) -> ApprovalChoice:
         loop = asyncio.get_running_loop()
         pending: asyncio.Future[ApprovalChoice] = loop.create_future()
-        self._pending_approval = pending
+        self._pending_approvals[request.call.id] = pending
         chat = self.query_one("#chat-view", VerticalScroll)
         tool_activity = self._pending_tools.get(request.call.id)
         if tool_activity is not None:
@@ -726,10 +726,21 @@ class ChatApp(App[None]):
         try:
             return await pending
         finally:
-            if self._pending_approval is pending:
-                self._pending_approval = None
+            self._pending_approvals.pop(request.call.id, None)
             if self._active_permission_card is card:
-                self._active_permission_card = None
+                # 还有别的请求在等确认（例如后台子 Agent）时，把焦点交给最新的一张。
+                self._active_permission_card = self._latest_pending_card()
+                if self._active_permission_card is not None:
+                    self._active_permission_card.focus()
+                    self._refresh_status("等待权限确认 · 选择 1–4 或 Esc")
+
+    def _latest_pending_card(self) -> InlinePermissionCard | None:
+        """返回仍在等待确认的最新卡片；没有则 None。"""
+        for call_id in reversed(list(self._pending_approvals)):
+            card = self._permission_cards.get(call_id)
+            if card is not None:
+                return card
+        return None
 
     async def request_skill_permission(self, request: PermissionRequest) -> ApprovalChoice:
         """供隔离 Skill 复用当前界面的权限确认卡片。"""
@@ -790,20 +801,23 @@ class ChatApp(App[None]):
         return False
 
     def on_inline_permission_card_selected(self, event: InlinePermissionCard.Selected) -> None:
-        """接收卡片焦点下的键盘选择。"""
+        """接收卡片焦点下的键盘选择；允许应答任意仍在等待的卡片。"""
         event.stop()
-        if event.card is self._active_permission_card:
-            self._resolve_active_permission(event.choice)
+        self._active_permission_card = event.card
+        self._resolve_active_permission(event.choice)
 
     def _resolve_active_permission(self, choice: ApprovalChoice) -> None:
         card = self._active_permission_card
-        if card is not None:
-            card.mark_selected(choice)
-            pending_tool = self._pending_tools.get(card.call_id)
-            if pending_tool is not None and choice is not ApprovalChoice.REJECT:
-                pending_tool.resume_execution()
-        if self._pending_approval is not None and not self._pending_approval.done():
-            self._pending_approval.set_result(choice)
+        if card is None:
+            return
+        card.mark_selected(choice)
+        pending_tool = self._pending_tools.get(card.call_id)
+        if pending_tool is not None and choice is not ApprovalChoice.REJECT:
+            pending_tool.resume_execution()
+        # 只解析这张卡片自己的 Future，不再依赖全局单槽位。
+        pending = self._pending_approvals.pop(card.call_id, None)
+        if pending is not None and not pending.done():
+            pending.set_result(choice)
 
     def _show_error(self, content: str, label: str = "请求失败") -> None:
         chat = self.query_one("#chat-view", VerticalScroll)
